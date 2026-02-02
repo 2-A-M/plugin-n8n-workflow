@@ -70,6 +70,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Generate node catalog
+        run: bun run crawl-nodes
+
       - name: Build package
         run: bun run build
 
