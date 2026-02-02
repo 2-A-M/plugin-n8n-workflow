@@ -41,11 +41,45 @@ export function createMockService(
         },
       })
     ),
+    modifyWorkflowDraft: mock(() =>
+      Promise.resolve({
+        name: 'Modified Workflow',
+        nodes: [
+          {
+            name: 'Schedule Trigger',
+            type: 'n8n-nodes-base.scheduleTrigger',
+            typeVersion: 1,
+            position: [0, 0],
+            parameters: {},
+          },
+          {
+            name: 'Outlook',
+            type: 'n8n-nodes-base.microsoftOutlook',
+            typeVersion: 2,
+            position: [200, 0],
+            parameters: { operation: 'send' },
+            credentials: {
+              microsoftOutlookOAuth2Api: { id: '{{CREDENTIAL_ID}}', name: 'Outlook Account' },
+            },
+          },
+        ],
+        connections: {
+          'Schedule Trigger': {
+            main: [[{ node: 'Outlook', type: 'main', index: 0 }]],
+          },
+        },
+        _meta: {
+          assumptions: ['Using Outlook as email service'],
+          suggestions: [],
+          requiresClarification: [],
+        },
+      })
+    ),
     deployWorkflow: mock(() =>
       Promise.resolve({
         id: 'wf-001',
         name: 'Generated Workflow',
-        active: false,
+        active: true,
         nodeCount: 2,
         missingCredentials: [],
       })

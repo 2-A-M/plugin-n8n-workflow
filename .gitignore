@@ -36,3 +36,6 @@ coverage/
 .temp/
 tmp/
 temp/
+# Generated node catalog (run `bun run crawl-nodes` to regenerate)
+src/data/defaultNodes.json
+

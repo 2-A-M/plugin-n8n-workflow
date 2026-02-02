@@ -9,19 +9,36 @@ import {
   type State,
 } from '@elizaos/core';
 import { N8N_WORKFLOW_SERVICE_TYPE, type N8nWorkflowService } from '../services/index';
+import { matchWorkflow } from '../utils/generation';
+import { buildConversationContext } from '../utils/context';
 
 const examples: ActionExample[][] = [
   [
     {
       name: '{{user1}}',
       content: {
-        text: 'Show me the execution history for workflow abc123',
+        text: 'Show me the execution history for the Stripe workflow',
       },
     },
     {
       name: '{{agent}}',
       content: {
         text: "I'll fetch the execution history for that workflow.",
+        actions: ['GET_N8N_EXECUTIONS'],
+      },
+    },
+  ],
+  [
+    {
+      name: '{{user1}}',
+      content: {
+        text: 'How did the email automation run last time?',
+      },
+    },
+    {
+      name: '{{agent}}',
+      content: {
+        text: 'Let me check the recent runs for that workflow.',
         actions: ['GET_N8N_EXECUTIONS'],
       },
     },
@@ -38,7 +55,7 @@ export const getExecutionsAction: Action = {
     'WORKFLOW_EXECUTIONS',
   ],
   description:
-    'Get execution history for an n8n workflow. Shows status, start time, and error messages if any.',
+    'Get execution history for an n8n workflow. Shows status, start time, and error messages if any. Identifies workflows by ID, name, or semantic description in any language.',
 
   validate: async (runtime: IAgentRuntime): Promise<boolean> => {
     return !!runtime.getService(N8N_WORKFLOW_SERVICE_TYPE);
@@ -67,17 +84,33 @@ export const getExecutionsAction: Action = {
     }
 
     try {
-      const workflowId = (state?.workflowId as string) || '';
+      const userId = message.entityId;
+      const workflows = await service.listWorkflows(userId);
 
-      if (!workflowId) {
+      if (workflows.length === 0) {
         if (callback) {
           await callback({
-            text: 'Please provide a workflow ID.',
+            text: 'No workflows available to check executions for.',
           });
         }
         return { success: false };
       }
 
+      const context = buildConversationContext(runtime, message, state);
+      const matchResult = await matchWorkflow(runtime, context, workflows);
+
+      if (!matchResult.matchedWorkflowId || matchResult.confidence === 'none') {
+        const workflowList = matchResult.matches.map((m) => `- ${m.name} (ID: ${m.id})`).join('\n');
+
+        if (callback) {
+          await callback({
+            text: `Could not identify which workflow to check. Available workflows:\n${workflowList}`,
+          });
+        }
+        return { success: false };
+      }
+
+      const workflowId = matchResult.matchedWorkflowId;
       const executions = await service.getWorkflowExecutions(workflowId, 10);
 
       logger.info(

@@ -17,5 +17,5 @@ export const draftIntentSchema = {
       description: 'Brief explanation of the classification',
     },
   },
-  required: ['intent', 'reason'],
+  required: ['intent', 'modificationRequest', 'reason'],
 };

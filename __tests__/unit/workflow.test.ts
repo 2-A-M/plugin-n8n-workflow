@@ -93,28 +93,11 @@ describe('validateWorkflow', () => {
     expect(orphanWarning).toContain('Slack');
   });
 
-  test('auto-fixes missing positions', () => {
+  test('warns about missing positions (positionNodes handles the fix)', () => {
     const workflow = createWorkflowWithoutPositions();
     const result = validateWorkflow(workflow);
     expect(result.valid).toBe(true);
-    expect(result.fixedWorkflow).toBeDefined();
-    // Fixed workflow should have valid positions
-    for (const node of result.fixedWorkflow!.nodes) {
-      expect(node.position).toBeDefined();
-      expect(Array.isArray(node.position)).toBe(true);
-      expect(node.position.length).toBe(2);
-    }
-  });
-
-  test('does not auto-fix when errors exist', () => {
-    // Workflow with both missing positions AND errors (empty nodes)
-    const result = validateWorkflow({
-      name: 'Bad',
-      nodes: [],
-      connections: {},
-    });
-    expect(result.valid).toBe(false);
-    expect(result.fixedWorkflow).toBeUndefined();
+    expect(result.warnings.some((w) => w.includes('auto-positioned'))).toBe(true);
   });
 
   test('detects nodes with missing name', () => {

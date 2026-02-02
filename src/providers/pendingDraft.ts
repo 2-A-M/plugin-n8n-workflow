@@ -27,10 +27,13 @@ export const pendingDraftProvider: Provider = {
     return {
       text:
         '# Pending Workflow Draft\n\n' +
-        `A workflow draft "${draft.workflow.name}" is waiting for user confirmation.\n` +
+        `A workflow draft "${draft.workflow.name}" is pending.\n` +
         `Nodes: ${nodeNames}\n\n` +
-        'If the user confirms, modifies, or cancels this draft, use the CREATE_N8N_WORKFLOW action.\n' +
-        'Do NOT just reply with text — the action must run to deploy or manage the draft.',
+        '**REQUIRED**: Any user message about this draft MUST trigger the CREATE_N8N_WORKFLOW action.\n' +
+        'This includes confirmations ("yes", "ok", "deploy it", "create it", "go ahead"),\n' +
+        'cancellations ("cancel", "nevermind"), and modifications ("change X", "use Y instead").\n' +
+        'The action handler manages all draft operations — do NOT handle them via text reply.\n' +
+        'You MUST include CREATE_N8N_WORKFLOW in your actions.',
       data: { hasPendingDraft: true },
       values: { hasPendingDraft: true },
     };

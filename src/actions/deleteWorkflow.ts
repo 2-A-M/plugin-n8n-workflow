@@ -11,7 +11,6 @@ import {
 import { N8N_WORKFLOW_SERVICE_TYPE, type N8nWorkflowService } from '../services/index';
 import { matchWorkflow } from '../utils/generation';
 import { buildConversationContext } from '../utils/context';
-import type { N8nWorkflow } from '../types/index';
 
 const examples: ActionExample[][] = [
   [
@@ -95,7 +94,8 @@ export const deleteWorkflowAction: Action = {
     }
 
     try {
-      const workflows = (state?.data?.workflows as N8nWorkflow[]) || [];
+      const userId = message.entityId;
+      const workflows = await service.listWorkflows(userId);
 
       if (workflows.length === 0) {
         if (callback) {

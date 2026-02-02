@@ -1,29 +1,24 @@
-import { describe, test, expect, mock } from "bun:test";
-import { activateWorkflowAction } from "../../../src/actions/activateWorkflow";
-import { deactivateWorkflowAction } from "../../../src/actions/deactivateWorkflow";
-import { deleteWorkflowAction } from "../../../src/actions/deleteWorkflow";
-import { N8N_WORKFLOW_SERVICE_TYPE } from "../../../src/services/n8n-workflow-service";
+import { describe, test, expect, mock } from 'bun:test';
+import { activateWorkflowAction } from '../../../src/actions/activateWorkflow';
+import { deactivateWorkflowAction } from '../../../src/actions/deactivateWorkflow';
+import { deleteWorkflowAction } from '../../../src/actions/deleteWorkflow';
+import { N8N_WORKFLOW_SERVICE_TYPE } from '../../../src/services/n8n-workflow-service';
 import {
   createMockRuntime,
   createMockMessage,
   createMockState,
   createMockCallback,
-} from "../../helpers/mockRuntime";
-import { createMockService } from "../../helpers/mockService";
-import {
-  createMatchResult,
-  createNoMatchResult,
-} from "../../fixtures/workflows";
-import type { ModelType } from "@elizaos/core";
+} from '../../helpers/mockRuntime';
+import { createMockService } from '../../helpers/mockService';
+import { createMatchResult, createNoMatchResult } from '../../fixtures/workflows';
+import type { ModelType } from '@elizaos/core';
 
 function createRuntimeWithMatchingWorkflow(
   matchResult = createMatchResult(),
-  serviceOverrides?: Record<string, unknown>,
+  serviceOverrides?: Record<string, unknown>
 ) {
   const mockService = createMockService(serviceOverrides);
-  const useModel = mock((_type: ModelType, _params: unknown) =>
-    Promise.resolve(matchResult),
-  );
+  const useModel = mock((_type: ModelType, _params: unknown) => Promise.resolve(matchResult));
   return {
     runtime: createMockRuntime({
       services: { [N8N_WORKFLOW_SERVICE_TYPE]: mockService },
@@ -37,8 +32,8 @@ function createStateWithWorkflows() {
   return createMockState({
     data: {
       workflows: [
-        { id: "wf-001", name: "Stripe Payments", active: true },
-        { id: "wf-002", name: "Gmail Notifications", active: false },
+        { id: 'wf-001', name: 'Stripe Payments', active: true },
+        { id: 'wf-002', name: 'Gmail Notifications', active: false },
       ],
     },
   });
@@ -48,30 +43,26 @@ function createStateWithWorkflows() {
 // ACTIVATE
 // ============================================================================
 
-describe("ACTIVATE_N8N_WORKFLOW action", () => {
-  describe("validate", () => {
-    test("returns true when service is available", async () => {
+describe('ACTIVATE_N8N_WORKFLOW action', () => {
+  describe('validate', () => {
+    test('returns true when service is available', async () => {
       const runtime = createMockRuntime({
         services: { [N8N_WORKFLOW_SERVICE_TYPE]: createMockService() },
       });
-      expect(await activateWorkflowAction.validate(runtime, {} as any)).toBe(
-        true,
-      );
+      expect(await activateWorkflowAction.validate(runtime, {} as any)).toBe(true);
     });
 
-    test("returns false when service is unavailable", async () => {
+    test('returns false when service is unavailable', async () => {
       const runtime = createMockRuntime();
-      expect(await activateWorkflowAction.validate(runtime, {} as any)).toBe(
-        false,
-      );
+      expect(await activateWorkflowAction.validate(runtime, {} as any)).toBe(false);
     });
   });
 
-  describe("handler", () => {
-    test("activates matched workflow", async () => {
+  describe('handler', () => {
+    test('activates matched workflow', async () => {
       const { runtime, service } = createRuntimeWithMatchingWorkflow();
       const message = createMockMessage({
-        content: { text: "Activate the Stripe workflow" },
+        content: { text: 'Activate the Stripe workflow' },
       });
       const callback = createMockCallback();
 
@@ -80,17 +71,19 @@ describe("ACTIVATE_N8N_WORKFLOW action", () => {
         message,
         createStateWithWorkflows(),
         {},
-        callback,
+        callback
       );
 
       expect(result.success).toBe(true);
-      expect(service.activateWorkflow).toHaveBeenCalledWith("wf-001");
+      expect(service.activateWorkflow).toHaveBeenCalledWith('wf-001');
     });
 
-    test("fails when no workflows available", async () => {
-      const { runtime } = createRuntimeWithMatchingWorkflow();
+    test('fails when no workflows available', async () => {
+      const { runtime } = createRuntimeWithMatchingWorkflow(createMatchResult(), {
+        listWorkflows: mock(() => Promise.resolve([])),
+      });
       const message = createMockMessage({
-        content: { text: "Activate something" },
+        content: { text: 'Activate something' },
       });
       const callback = createMockCallback();
 
@@ -99,20 +92,18 @@ describe("ACTIVATE_N8N_WORKFLOW action", () => {
         message,
         createMockState(),
         {},
-        callback,
+        callback
       );
 
       expect(result.success).toBe(false);
       const callText = (callback as any).mock.calls[0][0].text;
-      expect(callText).toContain("No workflows available");
+      expect(callText).toContain('No workflows available');
     });
 
-    test("fails when no match found", async () => {
-      const { runtime } = createRuntimeWithMatchingWorkflow(
-        createNoMatchResult(),
-      );
+    test('fails when no match found', async () => {
+      const { runtime } = createRuntimeWithMatchingWorkflow(createNoMatchResult());
       const message = createMockMessage({
-        content: { text: "Activate the unknown workflow" },
+        content: { text: 'Activate the unknown workflow' },
       });
       const callback = createMockCallback();
 
@@ -121,21 +112,18 @@ describe("ACTIVATE_N8N_WORKFLOW action", () => {
         message,
         createStateWithWorkflows(),
         {},
-        callback,
+        callback
       );
 
       expect(result.success).toBe(false);
     });
 
-    test("handles service error", async () => {
-      const { runtime } = createRuntimeWithMatchingWorkflow(
-        createMatchResult(),
-        {
-          activateWorkflow: mock(() => Promise.reject(new Error("API error"))),
-        },
-      );
+    test('handles service error', async () => {
+      const { runtime } = createRuntimeWithMatchingWorkflow(createMatchResult(), {
+        activateWorkflow: mock(() => Promise.reject(new Error('API error'))),
+      });
       const message = createMockMessage({
-        content: { text: "Activate Stripe" },
+        content: { text: 'Activate Stripe' },
       });
       const callback = createMockCallback();
 
@@ -144,7 +132,7 @@ describe("ACTIVATE_N8N_WORKFLOW action", () => {
         message,
         createStateWithWorkflows(),
         {},
-        callback,
+        callback
       );
 
       expect(result.success).toBe(false);
@@ -156,11 +144,11 @@ describe("ACTIVATE_N8N_WORKFLOW action", () => {
 // DEACTIVATE
 // ============================================================================
 
-describe("DEACTIVATE_N8N_WORKFLOW action", () => {
-  test("deactivates matched workflow", async () => {
+describe('DEACTIVATE_N8N_WORKFLOW action', () => {
+  test('deactivates matched workflow', async () => {
     const { runtime, service } = createRuntimeWithMatchingWorkflow();
     const message = createMockMessage({
-      content: { text: "Pause the Stripe workflow" },
+      content: { text: 'Pause the Stripe workflow' },
     });
     const callback = createMockCallback();
 
@@ -169,23 +157,25 @@ describe("DEACTIVATE_N8N_WORKFLOW action", () => {
       message,
       createStateWithWorkflows(),
       {},
-      callback,
+      callback
     );
 
     expect(result.success).toBe(true);
-    expect(service.deactivateWorkflow).toHaveBeenCalledWith("wf-001");
+    expect(service.deactivateWorkflow).toHaveBeenCalledWith('wf-001');
   });
 
-  test("fails when no workflows in state", async () => {
-    const { runtime } = createRuntimeWithMatchingWorkflow();
+  test('fails when no workflows available', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow(createMatchResult(), {
+      listWorkflows: mock(() => Promise.resolve([])),
+    });
     const callback = createMockCallback();
 
     const result = await deactivateWorkflowAction.handler(
       runtime,
-      createMockMessage({ content: { text: "Stop it" } }),
+      createMockMessage({ content: { text: 'Stop it' } }),
       createMockState(),
       {},
-      callback,
+      callback
     );
 
     expect(result.success).toBe(false);
@@ -196,11 +186,11 @@ describe("DEACTIVATE_N8N_WORKFLOW action", () => {
 // DELETE
 // ============================================================================
 
-describe("DELETE_N8N_WORKFLOW action", () => {
-  test("deletes matched workflow", async () => {
+describe('DELETE_N8N_WORKFLOW action', () => {
+  test('deletes matched workflow', async () => {
     const { runtime, service } = createRuntimeWithMatchingWorkflow();
     const message = createMockMessage({
-      content: { text: "Delete the Stripe workflow" },
+      content: { text: 'Delete the Stripe workflow' },
     });
     const callback = createMockCallback();
 
@@ -209,25 +199,23 @@ describe("DELETE_N8N_WORKFLOW action", () => {
       message,
       createStateWithWorkflows(),
       {},
-      callback,
+      callback
     );
 
     expect(result.success).toBe(true);
-    expect(service.deleteWorkflow).toHaveBeenCalledWith("wf-001");
+    expect(service.deleteWorkflow).toHaveBeenCalledWith('wf-001');
   });
 
-  test("fails when no match", async () => {
-    const { runtime } = createRuntimeWithMatchingWorkflow(
-      createNoMatchResult(),
-    );
+  test('fails when no match', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow(createNoMatchResult());
     const callback = createMockCallback();
 
     const result = await deleteWorkflowAction.handler(
       runtime,
-      createMockMessage({ content: { text: "Delete unknown" } }),
+      createMockMessage({ content: { text: 'Delete unknown' } }),
       createStateWithWorkflows(),
       {},
-      callback,
+      callback
     );
 
     expect(result.success).toBe(false);

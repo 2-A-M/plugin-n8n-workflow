@@ -3,7 +3,6 @@ import { N8nWorkflowService, N8nCredentialStore } from './services/index';
 import * as dbSchema from './db/index';
 import {
   createWorkflowAction,
-  listWorkflowsAction,
   getExecutionsAction,
   activateWorkflowAction,
   deactivateWorkflowAction,
@@ -26,7 +25,7 @@ import {
  * - `N8N_HOST`: Your n8n instance URL (e.g., https://your.n8n.cloud)
  *
  * **Optional Configuration:**
- * - `n8n.credentials`: Pre-configured credential IDs for local mode
+ * - `workflows.credentials`: Pre-configured credential IDs for local mode
  *
  * **Example Character Configuration:**
  * ```json
@@ -36,9 +35,9 @@ import {
  *   "settings": {
  *     "N8N_API_KEY": "env:N8N_API_KEY",
  *     "N8N_HOST": "https://your.n8n.cloud",
- *     "n8n": {
+ *     "workflows": {
  *       "credentials": {
- *         "gmailOAuth2Api": "cred_gmail_123",
+ *         "gmailOAuth2": "cred_gmail_123",
  *         "stripeApi": "cred_stripe_456"
  *       }
  *     }
@@ -59,7 +58,6 @@ export const n8nWorkflowPlugin: Plugin = {
 
   actions: [
     createWorkflowAction,
-    listWorkflowsAction,
     getExecutionsAction,
     activateWorkflowAction,
     deactivateWorkflowAction,
@@ -91,14 +89,17 @@ export const n8nWorkflowPlugin: Plugin = {
     }
 
     // Check for pre-configured credentials (optional)
-    const n8nSettings = runtime.getSetting('n8n') as
+    // Note: runtime.getSetting() only returns primitives — nested objects must be read directly
+    const workflowSettings = runtime.character?.settings?.workflows as
       | { credentials?: Record<string, string> }
       | undefined;
-    if (n8nSettings?.credentials) {
-      const credCount = Object.keys(n8nSettings.credentials).length;
+    if (workflowSettings?.credentials) {
+      const credCount = Object.keys(workflowSettings.credentials).filter(
+        (k) => workflowSettings.credentials![k]
+      ).length;
       logger.info(
         { src: 'plugin:n8n-workflow:plugin:init' },
-        `n8n Workflow Plugin - Pre-configured credentials: ${credCount} credential types`
+        `Pre-configured credentials: ${credCount} credential types`
       );
     }
 

@@ -1,7 +1,3 @@
-/**
- * System prompt for n8n workflow generation
- */
-
 export const WORKFLOW_GENERATION_SYSTEM_PROMPT = `## n8n Workflow AI Definition: Core Concepts
 
 ### 1. **Workflow**
@@ -114,7 +110,7 @@ When a node requires credentials, include a \`credentials\` field in the node ob
   "name": "Send Gmail",
   "type": "n8n-nodes-base.gmail",
   "credentials": {
-    "gmailOAuth2Api": {
+    "gmailOAuth2": {
       "id": "{{CREDENTIAL_ID}}",
       "name": "Gmail Account"
     }
@@ -122,7 +118,7 @@ When a node requires credentials, include a \`credentials\` field in the node ob
 }
 \`\`\`
 
-The credential ID will be injected automatically. Use the credential type name from the node's definition (e.g. \`gmailOAuth2Api\`, \`slackOAuth2Api\`, \`stripeApi\`).
+The credential ID will be injected automatically. **Use the exact credential type name from the node's \`credentials\` array** (e.g. \`gmailOAuth2\`, \`slackOAuth2Api\`, \`stripeApi\`). The credential type name varies per node — always refer to the node definition provided to you.
 
 ---
 
@@ -141,6 +137,11 @@ Workflow-level settings, e.g. timezone, error workflow, execution options.
 > - \`settings\`: Optional workflow settings.
 
 > Reference [n8n node type documentation](https://docs.n8n.io/integrations/builtin/app-nodes/) for available node types and their parameters.
+
+**CRITICAL: You MUST only use node types from the "Relevant Nodes Available" list provided below.**
+Do not invent, guess, or use node types that are not in the provided list.
+If a service the user mentioned is not in the available nodes, do NOT include it.
+Use \`_meta.assumptions\` to document when you used an alternative integration.
 
 **When creating nodes:**
 -  Use required parameters from the node's type definition.
@@ -210,46 +211,43 @@ Workflow-level settings, e.g. timezone, error workflow, execution options.
     },
     {
       "id": "uuid-2",
-      "name": "Get Stripe Payments",
-      "type": "n8n-nodes-base.stripe",
-      "typeVersion": 1,
+      "name": "Get Gmail Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
       "position": [200,0],
       "parameters": {
-        "resource": "charge",
-        "operation": "getAll"
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10
       },
       "credentials": {
-        "stripeApi": {
+        "gmailOAuth2": {
           "id": "{{CREDENTIAL_ID}}",
-          "name": "Stripe Account"
+          "name": "Gmail Account"
         }
       }
     },
     {
       "id": "uuid-3",
-      "name": "Send via Gmail",
-      "type": "n8n-nodes-base.gmail",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.slack",
       "typeVersion": 2,
       "position": [400,0],
       "parameters": {
-        "operation": "send",
-        "message": {
-          "to": "user@example.com",
-          "subject": "Daily Stripe Summary",
-          "body": "{{ $json.data }}"
-        }
+        "channel": "#notifications",
+        "text": "Daily email summary: {{ $json.subject }}"
       },
       "credentials": {
-        "gmailOAuth2Api": {
+        "slackOAuth2Api": {
           "id": "{{CREDENTIAL_ID}}",
-          "name": "Gmail Account"
+          "name": "Slack Account"
         }
       }
     }
   ],
   "connections": {
-    "Schedule Trigger": { "main": [ [ { "node": "Get Stripe Payments", "type": "main", "index": 0 } ] ] },
-    "Get Stripe Payments": { "main": [ [ { "node": "Send via Gmail", "type": "main", "index": 0 } ] ] }
+    "Schedule Trigger": { "main": [ [ { "node": "Get Gmail Messages", "type": "main", "index": 0 } ] ] },
+    "Get Gmail Messages": { "main": [ [ { "node": "Post to Slack", "type": "main", "index": 0 } ] ] }
   }
 }
 \`\`\`
@@ -272,6 +270,21 @@ Workflow-level settings, e.g. timezone, error workflow, execution options.
 
 **Use only these fields and structures for AI workflow generation.**
 For parameter validation and types, rely on the node's type definition and basic TypeScript types.
+
+## **Workflow Naming**
+
+The \`name\` field must be a short, descriptive label (3-6 words max) that summarizes what the workflow does.
+
+**Good names:**
+- "Gmail Résumé vers Proton"
+- "Daily Stripe Summary via Gmail"
+- "New GitHub Issue → Slack Alert"
+- "Weekly Sales Report"
+
+**Bad names (never do this):**
+- "Workflow - Tu peux creer un workflow qui trigger a chaque fois que je recois un mail" (user prompt as name)
+- "My Workflow" (too vague)
+- "Automation" (meaningless)
 
 ---
 

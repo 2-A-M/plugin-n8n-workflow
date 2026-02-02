@@ -7,7 +7,6 @@ import {
   createExecution,
   createCredential,
   createTag,
-  createCredentialSchema,
 } from '../fixtures/workflows';
 
 // ============================================================================
@@ -239,18 +238,6 @@ describe('N8nApiClient credentials', () => {
     expect(url).toBe('https://n8n.test/api/v1/credentials');
     expect(options.method).toBe('POST');
     expect(result.id).toBe('cred-new');
-  });
-
-  test('getCredentialSchema sends GET /credentials/schema/{type}', async () => {
-    const schema = createCredentialSchema();
-    mockFetch = mock(() => Promise.resolve(mockResponse(200, schema)));
-    globalThis.fetch = mockFetch as any;
-
-    const result = await client.getCredentialSchema('gmailOAuth2Api');
-
-    const { url } = getLastFetchCall();
-    expect(url).toBe('https://n8n.test/api/v1/credentials/schema/gmailOAuth2Api');
-    expect(result.properties).toBeDefined();
   });
 
   test('deleteCredential sends DELETE /credentials/{id}', async () => {

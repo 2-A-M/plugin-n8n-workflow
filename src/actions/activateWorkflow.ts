@@ -11,7 +11,9 @@ import {
 import { N8N_WORKFLOW_SERVICE_TYPE, type N8nWorkflowService } from '../services/index';
 import { matchWorkflow } from '../utils/generation';
 import { buildConversationContext } from '../utils/context';
-import type { N8nWorkflow } from '../types/index';
+import type { WorkflowDraft } from '../types/index';
+
+const DRAFT_TTL_MS = 30 * 60 * 1000;
 
 const examples: ActionExample[][] = [
   [
@@ -95,8 +97,71 @@ export const activateWorkflowAction: Action = {
     }
 
     try {
-      // Get workflows from state (activeWorkflowsProvider)
-      const workflows = (state?.data?.workflows as N8nWorkflow[]) || [];
+      // Draft redirect: if a pending draft exists, the LLM likely misrouted a confirmation.
+      // Deploy the draft instead of running the normal activate flow.
+      const cacheKey = `workflow_draft:${message.entityId}`;
+      let pendingDraft = await runtime.getCache<WorkflowDraft>(cacheKey);
+
+      if (pendingDraft && Date.now() - pendingDraft.createdAt > DRAFT_TTL_MS) {
+        await runtime.deleteCache(cacheKey);
+        pendingDraft = undefined;
+      }
+
+      if (pendingDraft) {
+        // Don't deploy drafts that still need clarification
+        if (pendingDraft.workflow._meta?.requiresClarification?.length) {
+          logger.info(
+            { src: 'plugin:n8n-workflow:action:activate' },
+            'Draft redirect: draft needs clarification, prompting user'
+          );
+          if (callback) {
+            await callback({
+              text: 'I still need a bit more information before I can create this workflow. Could you answer the questions above?',
+            });
+          }
+          return { success: false };
+        }
+
+        logger.info(
+          { src: 'plugin:n8n-workflow:action:activate' },
+          `Draft redirect: deploying pending draft "${pendingDraft.workflow.name}" (LLM misrouted to ACTIVATE)`
+        );
+
+        const result = await service.deployWorkflow(pendingDraft.workflow, message.entityId);
+
+        // Deploy blocked — unresolved credentials
+        if (result.missingCredentials.length > 0) {
+          const connList = result.missingCredentials
+            .map((m) =>
+              m.authUrl ? `- **${m.credType}**: [Connect](${m.authUrl})` : `- **${m.credType}**`
+            )
+            .join('\n');
+          if (callback) {
+            await callback({
+              text: `The following services need to be connected before deploying:\n\n${connList}\n\nPlease connect them and try again.`,
+            });
+          }
+          return { success: true };
+        }
+
+        await runtime.deleteCache(cacheKey);
+
+        let responseText = `Workflow "${result.name}" deployed successfully!\n\n`;
+        responseText += `**Workflow ID:** ${result.id}\n`;
+        responseText += `**Nodes:** ${result.nodeCount}\n`;
+        responseText += `**Status:** ${result.active ? 'Active' : 'Inactive'}\n`;
+        responseText += '\nAll credentials configured — workflow is ready to run!';
+
+        if (callback) {
+          await callback({ text: responseText });
+        }
+
+        return { success: true, data: result };
+      }
+
+      // Fetch workflows directly from service
+      const userId = message.entityId;
+      const workflows = await service.listWorkflows(userId);
 
       if (workflows.length === 0) {
         if (callback) {

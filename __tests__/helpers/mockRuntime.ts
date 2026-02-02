@@ -11,6 +11,27 @@ export interface MockRuntimeOptions {
   cache?: Record<string, unknown>;
 }
 
+/**
+ * Create a useModel mock that handles both structured (schema) and text (formatting) calls.
+ *
+ * - Schema calls (OBJECT_SMALL) → return schemaResult
+ * - Text calls (TEXT_SMALL for formatActionResponse) → return the data section from the prompt
+ *   so tests can verify that the right data was passed to the LLM
+ */
+export function createUseModelMock(schemaResult?: Record<string, unknown>) {
+  return mock((_type: string, opts: Record<string, unknown>) => {
+    // Schema-based calls (intent classification, keyword extraction)
+    if (opts?.schema) return Promise.resolve(schemaResult || {});
+
+    // Text calls (response formatting) — extract and return the data section
+    const prompt = (opts?.prompt || '') as string;
+    const dataIdx = prompt.lastIndexOf('\n\n{');
+    if (dataIdx !== -1) return Promise.resolve(prompt.slice(dataIdx + 2));
+
+    return Promise.resolve('');
+  });
+}
+
 export function createMockRuntime(options: MockRuntimeOptions = {}): IAgentRuntime {
   const services = options.services || {};
   const settings = options.settings || {};
@@ -20,7 +41,7 @@ export function createMockRuntime(options: MockRuntimeOptions = {}): IAgentRunti
     agentId: options.agentId || 'agent-001',
     getService: mock((type: string) => services[type] || null),
     getSetting: mock((key: string) => settings[key] ?? null),
-    useModel: options.useModel || mock(() => Promise.resolve({})),
+    useModel: options.useModel || createUseModelMock(),
     getCache: mock((key: string) => Promise.resolve(cache[key])),
     setCache: mock((key: string, value: unknown) => {
       cache[key] = value;

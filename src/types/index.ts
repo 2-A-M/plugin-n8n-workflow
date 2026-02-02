@@ -94,22 +94,6 @@ export interface N8nCredential {
   updatedAt: string;
 }
 
-export interface N8nCredentialSchema {
-  type: 'object';
-  additionalProperties: boolean;
-  properties: Record<
-    string,
-    {
-      type: string;
-      displayName?: string;
-      default?: unknown;
-      required?: boolean;
-      description?: string;
-    }
-  >;
-  required?: string[];
-}
-
 export interface N8nExecution {
   id: string;
   finished: boolean;
@@ -208,6 +192,11 @@ export interface NodeSearchResult {
   matchReason: string;
 }
 
+export interface IntegrationFilterResult {
+  remaining: NodeSearchResult[];
+  removed: NodeSearchResult[];
+}
+
 // Workflow generation types
 
 export interface KeywordExtractionResult {
@@ -232,55 +221,52 @@ export interface WorkflowValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
-  fixedWorkflow?: N8nWorkflow;
 }
 
-// Credential management types (for cloud mode)
+// Credential provider types
 
-export interface UserTokens {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt?: Date;
-  expiresIn?: number;
-  scope?: string;
-  tokenType?: string;
-  apiKey?: string; // For non-OAuth providers like Stripe
-  domain?: string; // For providers like Freshdesk
-  metadata?: Record<string, unknown>;
-}
+export const N8N_CREDENTIAL_PROVIDER_TYPE = 'n8n_credential_provider';
 
 /**
- * Duck-typed OAuth service interface.
- * Any service with serviceType = "oauth" implementing these methods will work.
- * Used for cloud mode with automatic OAuth credential injection.
+ * Result of a credential resolution attempt by an external provider.
+ */
+export type CredentialProviderResult =
+  | { status: 'credential_data'; data: Record<string, unknown> }
+  | { status: 'needs_auth'; authUrl: string }
+  | null;
+
+/**
+ * External credential provider interface.
  *
+ * Hosts (e.g. eliza-cloud) can register a service implementing this interface
+ * to automatically resolve credentials (via OAuth, API keys, etc.).
+ * The plugin works without one — it's an optional enhancement.
+ *
+ * Register on runtime as service type 'n8n_credential_provider'.
  */
-export type OAuthService = {
-  getAuthUrl(userId: string, provider: string, scopes: string[]): Promise<string>;
-  hasConnection(userId: string, credType: string): Promise<boolean>;
-  getTokens(userId: string, credType: string): Promise<UserTokens | null>;
-  getOAuthAppConfig?(provider: string): Promise<{
-    clientId: string;
-    clientSecret: string;
-    scope?: string;
-  }>;
-};
+export interface CredentialProvider {
+  resolve(userId: string, credType: string): Promise<CredentialProviderResult>;
+  checkCredentialTypes?(credTypes: string[]): CheckCredentialTypesResult;
+}
+
+export interface CheckCredentialTypesResult {
+  supported: string[];
+  unsupported: string[];
+}
+
+export interface FeasibilityResult {
+  feasible: boolean;
+  reason: string;
+}
 
 /**
- * Type guard to check if a service implements OAuthService interface
+ * Type guard to check if a service implements CredentialProvider
  */
-export function isOAuthService(service: unknown): service is OAuthService {
+export function isCredentialProvider(service: unknown): service is CredentialProvider {
   if (!service || typeof service !== 'object') {
     return false;
   }
-
-  const s = service as Record<string, unknown>;
-
-  return (
-    typeof s.getAuthUrl === 'function' &&
-    typeof s.hasConnection === 'function' &&
-    typeof s.getTokens === 'function'
-  );
+  return typeof (service as Record<string, unknown>).resolve === 'function';
 }
 
 // Credential store types
@@ -302,7 +288,7 @@ export interface CredentialResolutionResult {
 
 export interface MissingConnection {
   credType: string;
-  oauthUrl?: string; // Only in cloud mode
+  authUrl?: string;
 }
 
 // Plugin configuration types
@@ -323,7 +309,7 @@ export interface WorkflowDraft {
 }
 
 export interface DraftIntentResult {
-  intent: 'confirm' | 'cancel' | 'modify' | 'new';
+  intent: 'confirm' | 'cancel' | 'modify' | 'new' | 'show_preview';
   modificationRequest?: string;
   reason: string;
 }
@@ -333,7 +319,7 @@ export interface WorkflowCreationResult extends Record<string, unknown> {
   name: string;
   active: boolean;
   nodeCount: number;
-  missingCredentials: string[];
+  missingCredentials: MissingConnection[];
 }
 
 // Error types
@@ -349,12 +335,12 @@ export class N8nApiError extends Error {
   }
 }
 
-export class WorkflowValidationError extends Error {
+export class UnsupportedIntegrationError extends Error {
   constructor(
-    message: string,
-    public errors: string[]
+    public unsupportedServices: string[],
+    public availableServices: string[]
   ) {
-    super(message);
-    this.name = 'WorkflowValidationError';
+    super(`Unsupported integrations: ${unsupportedServices.join(', ')}`);
+    this.name = 'UnsupportedIntegrationError';
   }
 }

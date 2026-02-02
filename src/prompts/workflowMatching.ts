@@ -1,8 +1,3 @@
-/**
- * System prompt for workflow matching
- *
- * Used by the LLM to semantically match user requests to available workflows
- */
 export const WORKFLOW_MATCHING_SYSTEM_PROMPT = `You are a workflow matching assistant. Your job is to analyze a user's request and match it to the most appropriate n8n workflow from their available workflows.
 
 Consider:

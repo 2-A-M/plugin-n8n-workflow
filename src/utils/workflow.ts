@@ -1,15 +1,9 @@
-import type { N8nWorkflow, WorkflowValidationResult } from '../types/index';
+import type { N8nWorkflow, NodeProperty, WorkflowValidationResult } from '../types/index';
+import { getNodeDefinition } from './catalog';
 
-/**
- * Validate workflow structure and auto-fix common issues
- *
- * @param workflow - Generated workflow to validate
- * @returns Validation result with errors, warnings, and optionally fixed workflow
- */
 export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
-  let needsFix = false;
 
   // 1. Check nodes array exists and is non-empty
   if (!workflow.nodes || !Array.isArray(workflow.nodes)) {
@@ -51,10 +45,9 @@ export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResul
     nodeNames.add(node.name);
     nodeMap.set(node.name, node);
 
-    // Check position
+    // Check position (positionNodes() will fix this after validation)
     if (!node.position || !Array.isArray(node.position) || node.position.length !== 2) {
-      warnings.push(`Node "${node.name}" has invalid position, will auto-fix`);
-      needsFix = true;
+      warnings.push(`Node "${node.name}" has invalid position, will be auto-positioned`);
     }
 
     // Check parameters
@@ -132,12 +125,6 @@ export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResul
     }
   }
 
-  // 7. Auto-fix if needed
-  let fixedWorkflow: N8nWorkflow | undefined;
-  if (needsFix && errors.length === 0) {
-    fixedWorkflow = autoFixWorkflow(workflow);
-  }
-
   if (errors.length > 0) {
     return { valid: false, errors, warnings };
   }
@@ -146,50 +133,127 @@ export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResul
     valid: true,
     errors: [],
     warnings,
-    fixedWorkflow,
   };
 }
 
-/**
- * Auto-fix common workflow issues
- * - Add missing node positions
- * - Fix duplicate node names
- */
-function autoFixWorkflow(workflow: N8nWorkflow): N8nWorkflow {
-  const fixed = { ...workflow };
-  fixed.nodes = [...workflow.nodes];
+export function validateNodeParameters(workflow: N8nWorkflow): string[] {
+  const warnings: string[] = [];
 
-  let x = 250;
-  const y = 300;
-  const xSpacing = 250;
+  for (const node of workflow.nodes) {
+    const nodeDef = getNodeDefinition(node.type);
+    if (!nodeDef) {
+      continue;
+    } // Unknown node type — skip
 
-  for (let i = 0; i < fixed.nodes.length; i++) {
-    const node = { ...fixed.nodes[i] };
+    for (const prop of nodeDef.properties) {
+      if (!prop.required) {
+        continue;
+      }
+      if (!isPropertyVisible(prop, node.parameters)) {
+        continue;
+      }
 
-    // Fix missing or invalid position
-    if (!node.position || !Array.isArray(node.position) || node.position.length !== 2) {
-      node.position = [x, y];
-      x += xSpacing;
+      const value = node.parameters?.[prop.name];
+      if (value === undefined || value === null || value === '') {
+        const label = prop.displayName || prop.name;
+        warnings.push(`Node "${node.name}": missing required parameter "${label}"`);
+      }
     }
-
-    fixed.nodes[i] = node;
   }
 
-  return fixed;
+  return warnings;
 }
 
 /**
- * Auto-position nodes on workflow canvas
- * Adapted from n8n-workflow-builder positioning logic
- *
- * Creates a left-to-right flow layout:
- * - Start at [250, 300]
- * - Advance X by 250px per node
- * - Branch nodes offset Y by 200px
- *
- * @param workflow - Workflow with potentially missing node positions
- * @returns Workflow with all nodes positioned
+ * n8n displayOptions logic:
+ * - `show`: ALL conditions must match for visible
+ * - `hide`: ANY match hides the property
  */
+function isPropertyVisible(prop: NodeProperty, parameters: Record<string, unknown>): boolean {
+  if (!prop.displayOptions) {
+    return true;
+  }
+
+  const show = prop.displayOptions as {
+    show?: Record<string, unknown[]>;
+    hide?: Record<string, unknown[]>;
+  };
+
+  // If "show" is defined, ALL conditions must match
+  if (show.show) {
+    for (const [key, allowedValues] of Object.entries(show.show)) {
+      if (!Array.isArray(allowedValues)) {
+        continue;
+      }
+      const paramValue = parameters?.[key];
+      if (!allowedValues.includes(paramValue)) {
+        return false;
+      }
+    }
+  }
+
+  // If "hide" is defined, ANY match hides the property
+  if (show.hide) {
+    for (const [key, hiddenValues] of Object.entries(show.hide)) {
+      if (!Array.isArray(hiddenValues)) {
+        continue;
+      }
+      const paramValue = parameters?.[key];
+      if (hiddenValues.includes(paramValue)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export function validateNodeInputs(workflow: N8nWorkflow): string[] {
+  const warnings: string[] = [];
+
+  // Count incoming connections per node
+  const incomingCount = new Map<string, number>();
+  for (const node of workflow.nodes) {
+    incomingCount.set(node.name, 0);
+  }
+  for (const outputs of Object.values(workflow.connections)) {
+    for (const connectionGroups of Object.values(outputs)) {
+      for (const connections of connectionGroups) {
+        for (const conn of connections) {
+          incomingCount.set(conn.node, (incomingCount.get(conn.node) || 0) + 1);
+        }
+      }
+    }
+  }
+
+  for (const node of workflow.nodes) {
+    const nodeDef = getNodeDefinition(node.type);
+    if (!nodeDef) {
+      continue;
+    }
+
+    const isTrigger =
+      node.type.toLowerCase().includes('trigger') ||
+      node.type.toLowerCase().includes('webhook') ||
+      nodeDef.group.includes('trigger');
+
+    if (isTrigger) {
+      continue;
+    } // Triggers don't need incoming connections
+
+    const expectedInputs = nodeDef.inputs.filter((i) => i === 'main').length;
+    const actualInputs = incomingCount.get(node.name) || 0;
+
+    if (expectedInputs > 0 && actualInputs < expectedInputs) {
+      warnings.push(
+        `Node "${node.name}" expects ${expectedInputs} input(s) but has ${actualInputs}`
+      );
+    }
+  }
+
+  return warnings;
+}
+
 export function positionNodes(workflow: N8nWorkflow): N8nWorkflow {
   // Clone workflow
   const positioned = { ...workflow };
@@ -219,9 +283,6 @@ export function positionNodes(workflow: N8nWorkflow): N8nWorkflow {
   return positioned;
 }
 
-/**
- * Build adjacency graph from connections
- */
 function buildNodeGraph(workflow: N8nWorkflow): Map<string, string[]> {
   const graph = new Map<string, string[]>();
 
@@ -250,9 +311,6 @@ function buildNodeGraph(workflow: N8nWorkflow): Map<string, string[]> {
   return graph;
 }
 
-/**
- * Position nodes by levels (breadth-first layout)
- */
 function positionByLevels(
   nodes: N8nWorkflow['nodes'],
   graph: Map<string, string[]>
