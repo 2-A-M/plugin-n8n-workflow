@@ -78,6 +78,7 @@ export const getExecutionsAction: Action = {
       if (callback) {
         await callback({
           text: 'N8n Workflow service is not available.',
+          success: false,
         });
       }
       return { success: false };
@@ -91,6 +92,7 @@ export const getExecutionsAction: Action = {
         if (callback) {
           await callback({
             text: 'No workflows available to check executions for.',
+            success: false,
           });
         }
         return { success: false };
@@ -105,6 +107,7 @@ export const getExecutionsAction: Action = {
         if (callback) {
           await callback({
             text: `Could not identify which workflow to check. Available workflows:\n${workflowList}`,
+            success: false,
           });
         }
         return { success: false };
@@ -122,6 +125,7 @@ export const getExecutionsAction: Action = {
         if (callback) {
           await callback({
             text: `No executions found for workflow ${workflowId}. The workflow may not have run yet.`,
+            success: true,
           });
         }
         return { success: true, data: { executions: [] } };
@@ -157,6 +161,7 @@ export const getExecutionsAction: Action = {
       if (callback) {
         await callback({
           text: responseText,
+          success: true,
         });
       }
 
@@ -174,6 +179,7 @@ export const getExecutionsAction: Action = {
       if (callback) {
         await callback({
           text: `Failed to get executions: ${errorMessage}`,
+          success: false,
         });
       }
 

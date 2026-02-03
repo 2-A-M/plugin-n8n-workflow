@@ -8,6 +8,7 @@ import {
   createMockMessage,
   createMockState,
   createMockCallback,
+  getLastCallbackResult,
 } from '../../helpers/mockRuntime';
 import { createMockService } from '../../helpers/mockService';
 import { createMatchResult, createNoMatchResult } from '../../fixtures/workflows';
@@ -219,5 +220,111 @@ describe('DELETE_N8N_WORKFLOW action', () => {
     );
 
     expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================================
+// CALLBACK SUCCESS STATUS TESTS
+// ============================================================================
+
+describe('Callback success status', () => {
+  test('activate success returns success: true in callback', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow();
+    const callback = createMockCallback();
+
+    await activateWorkflowAction.handler(
+      runtime,
+      createMockMessage({ content: { text: 'Activate Stripe' } }),
+      createStateWithWorkflows(),
+      {},
+      callback
+    );
+
+    const lastResult = getLastCallbackResult(callback);
+    expect(lastResult?.success).toBe(true);
+  });
+
+  test('activate failure returns success: false in callback', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow(createMatchResult(), {
+      activateWorkflow: mock(() => Promise.reject(new Error('API error'))),
+    });
+    const callback = createMockCallback();
+
+    await activateWorkflowAction.handler(
+      runtime,
+      createMockMessage({ content: { text: 'Activate Stripe' } }),
+      createStateWithWorkflows(),
+      {},
+      callback
+    );
+
+    const lastResult = getLastCallbackResult(callback);
+    expect(lastResult?.success).toBe(false);
+  });
+
+  test('deactivate success returns success: true in callback', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow();
+    const callback = createMockCallback();
+
+    await deactivateWorkflowAction.handler(
+      runtime,
+      createMockMessage({ content: { text: 'Pause Stripe' } }),
+      createStateWithWorkflows(),
+      {},
+      callback
+    );
+
+    const lastResult = getLastCallbackResult(callback);
+    expect(lastResult?.success).toBe(true);
+  });
+
+  test('delete success returns success: true in callback', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow();
+    const callback = createMockCallback();
+
+    await deleteWorkflowAction.handler(
+      runtime,
+      createMockMessage({ content: { text: 'Delete Stripe' } }),
+      createStateWithWorkflows(),
+      {},
+      callback
+    );
+
+    const lastResult = getLastCallbackResult(callback);
+    expect(lastResult?.success).toBe(true);
+  });
+
+  test('no workflows returns success: false in callback', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow(createMatchResult(), {
+      listWorkflows: mock(() => Promise.resolve([])),
+    });
+    const callback = createMockCallback();
+
+    await activateWorkflowAction.handler(
+      runtime,
+      createMockMessage({ content: { text: 'Activate something' } }),
+      createMockState(),
+      {},
+      callback
+    );
+
+    const lastResult = getLastCallbackResult(callback);
+    expect(lastResult?.success).toBe(false);
+  });
+
+  test('no match returns success: false in callback', async () => {
+    const { runtime } = createRuntimeWithMatchingWorkflow(createNoMatchResult());
+    const callback = createMockCallback();
+
+    await activateWorkflowAction.handler(
+      runtime,
+      createMockMessage({ content: { text: 'Activate unknown' } }),
+      createStateWithWorkflows(),
+      {},
+      callback
+    );
+
+    const lastResult = getLastCallbackResult(callback);
+    expect(lastResult?.success).toBe(false);
   });
 });

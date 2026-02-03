@@ -76,5 +76,16 @@ export function createMockState(overrides?: Partial<State>): State {
 }
 
 export function createMockCallback() {
-  return mock((_response: { text: string }) => Promise.resolve([]));
+  return mock((_response: { text: string; success?: boolean }) => Promise.resolve([]));
+}
+
+/**
+ * Helper to get the last callback result with both text and success status
+ */
+export function getLastCallbackResult(
+  callback: MockFn
+): { text: string; success?: boolean } | undefined {
+  const calls = (callback as any).mock.calls;
+  if (calls.length === 0) return undefined;
+  return calls[calls.length - 1][0];
 }

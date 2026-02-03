@@ -94,6 +94,7 @@ export const deactivateWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: 'N8n Workflow service is not available.',
+          success: false,
         });
       }
       return { success: false };
@@ -107,6 +108,7 @@ export const deactivateWorkflowAction: Action = {
         if (callback) {
           await callback({
             text: 'No workflows available to deactivate.',
+            success: false,
           });
         }
         return { success: false };
@@ -121,6 +123,7 @@ export const deactivateWorkflowAction: Action = {
         if (callback) {
           await callback({
             text: `Could not identify which workflow to deactivate. Available workflows:\n${workflowList}`,
+            success: false,
           });
         }
         return { success: false };
@@ -136,6 +139,7 @@ export const deactivateWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: '⏸️  Workflow deactivated and will no longer run automatically.',
+          success: true,
         });
       }
 
@@ -150,6 +154,7 @@ export const deactivateWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: `Failed to deactivate workflow: ${errorMessage}`,
+          success: false,
         });
       }
 

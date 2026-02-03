@@ -7,6 +7,7 @@ import {
   createMockState,
   createMockCallback,
   createUseModelMock,
+  getLastCallbackResult,
 } from '../../helpers/mockRuntime';
 import { createMockService } from '../../helpers/mockService';
 import type { WorkflowDraft } from '../../../src/types/index';
@@ -505,6 +506,163 @@ describe('CREATE_N8N_WORKFLOW action', () => {
       expect(resultText).toContain('https://auth.example.com/stripe');
       expect(resultText).toContain('gmailOAuth2Api');
       expect(resultText).toContain('stripeApi');
+    });
+  });
+
+  // ==========================================================================
+  // CALLBACK SUCCESS STATUS TESTS
+  // ==========================================================================
+
+  describe('callback success status', () => {
+    test('empty prompt returns success: false in callback', async () => {
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: createMockService() },
+      });
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: '' } }),
+        createMockState(),
+        {},
+        callback
+      );
+
+      const lastResult = getLastCallbackResult(callback);
+      expect(lastResult?.success).toBe(false);
+    });
+
+    test('service unavailable returns success: false in callback', async () => {
+      const runtime = createMockRuntime();
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: 'Create a workflow' } }),
+        createMockState(),
+        {},
+        callback
+      );
+
+      const lastResult = getLastCallbackResult(callback);
+      expect(lastResult?.success).toBe(false);
+    });
+
+    test('generation error returns success: false in callback', async () => {
+      const mockService = createMockService({
+        generateWorkflowDraft: mock(() => Promise.reject(new Error('LLM failed'))),
+      });
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: mockService },
+      });
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: 'Create a workflow' } }),
+        createMockState(),
+        {},
+        callback
+      );
+
+      const lastResult = getLastCallbackResult(callback);
+      expect(lastResult?.success).toBe(false);
+    });
+
+    test('successful preview returns success: true in callback', async () => {
+      const mockService = createMockService();
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: mockService },
+      });
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: 'Create a Stripe workflow' } }),
+        createMockState(),
+        {},
+        callback
+      );
+
+      const lastResult = getLastCallbackResult(callback);
+      expect(lastResult?.success).toBe(true);
+    });
+
+    test('successful deploy returns success: true in callback', async () => {
+      const draft: WorkflowDraft = {
+        workflow: {
+          name: 'Test',
+          nodes: [
+            {
+              name: 'Start',
+              type: 'n8n-nodes-base.start',
+              typeVersion: 1,
+              position: [0, 0],
+              parameters: {},
+            },
+          ],
+          connections: {},
+        },
+        prompt: 'test',
+        userId: 'user-001',
+        createdAt: Date.now(),
+      };
+      const mockService = createMockService();
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: mockService },
+        useModel: createUseModelMock({ intent: 'confirm', reason: 'User confirmed' }),
+        cache: { 'workflow_draft:user-001': draft },
+      });
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: 'Yes deploy' } }),
+        createMockState(),
+        {},
+        callback
+      );
+
+      const lastResult = getLastCallbackResult(callback);
+      expect(lastResult?.success).toBe(true);
+    });
+
+    test('cancel returns success: true in callback', async () => {
+      const draft: WorkflowDraft = {
+        workflow: {
+          name: 'Test',
+          nodes: [
+            {
+              name: 'Start',
+              type: 'n8n-nodes-base.start',
+              typeVersion: 1,
+              position: [0, 0],
+              parameters: {},
+            },
+          ],
+          connections: {},
+        },
+        prompt: 'test',
+        userId: 'user-001',
+        createdAt: Date.now(),
+      };
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: createMockService() },
+        useModel: createUseModelMock({ intent: 'cancel', reason: 'User cancelled' }),
+        cache: { 'workflow_draft:user-001': draft },
+      });
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: 'Cancel' } }),
+        createMockState(),
+        {},
+        callback
+      );
+
+      const lastResult = getLastCallbackResult(callback);
+      expect(lastResult?.success).toBe(true);
     });
   });
 });

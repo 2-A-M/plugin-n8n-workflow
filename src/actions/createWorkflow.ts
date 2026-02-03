@@ -260,7 +260,7 @@ export const createWorkflowAction: Action = {
         const text = await formatActionResponse(runtime, 'ERROR', {
           error: 'N8n Workflow service is not available. Check N8N_API_KEY and N8N_HOST.',
         });
-        await callback({ text });
+        await callback({ text, success: false });
       }
       return { success: false };
     }
@@ -315,7 +315,7 @@ export const createWorkflowAction: Action = {
                 })),
               });
               if (callback) {
-                await callback({ text });
+                await callback({ text, success: true });
               }
               return { success: true };
             }
@@ -329,7 +329,7 @@ export const createWorkflowAction: Action = {
               active: result.active,
             });
             if (callback) {
-              await callback({ text });
+              await callback({ text, success: true });
             }
             return { success: true, data: result };
           }
@@ -340,7 +340,7 @@ export const createWorkflowAction: Action = {
               workflowName: existingDraft.workflow.name,
             });
             if (callback) {
-              await callback({ text });
+              await callback({ text, success: true });
             }
             return { success: true };
           }
@@ -370,7 +370,7 @@ export const createWorkflowAction: Action = {
                 questions: modifiedWorkflow._meta.requiresClarification,
               });
               if (callback) {
-                await callback({ text });
+                await callback({ text, success: true });
               }
               return { success: true };
             }
@@ -381,7 +381,7 @@ export const createWorkflowAction: Action = {
               buildPreviewData(modifiedWorkflow)
             );
             if (callback) {
-              await callback({ text });
+              await callback({ text, success: true });
             }
             return { success: true };
           }
@@ -390,7 +390,7 @@ export const createWorkflowAction: Action = {
             if (!userText) {
               const text = await formatActionResponse(runtime, 'EMPTY_PROMPT', {});
               if (callback) {
-                await callback({ text });
+                await callback({ text, success: false });
               }
               await runtime.deleteCache(cacheKey);
               return { success: false };
@@ -417,7 +417,7 @@ export const createWorkflowAction: Action = {
                 restoredAfterFailure: true,
               });
               if (callback) {
-                await callback({ text });
+                await callback({ text, success: true });
               }
               return { success: true };
             }
@@ -434,7 +434,7 @@ export const createWorkflowAction: Action = {
               buildPreviewData(existingDraft.workflow)
             );
             if (callback) {
-              await callback({ text });
+              await callback({ text, success: true });
             }
             return { success: true };
           }
@@ -444,7 +444,7 @@ export const createWorkflowAction: Action = {
       if (!userText) {
         const text = await formatActionResponse(runtime, 'EMPTY_PROMPT', {});
         if (callback) {
-          await callback({ text });
+          await callback({ text, success: false });
         }
         return { success: false };
       }
@@ -464,9 +464,9 @@ export const createWorkflowAction: Action = {
           available: error.availableServices,
         });
         if (callback) {
-          await callback({ text });
+          await callback({ text, success: false });
         }
-        return { success: true };
+        return { success: false };
       }
 
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -477,7 +477,7 @@ export const createWorkflowAction: Action = {
 
       const text = await formatActionResponse(runtime, 'ERROR', { error: errorMessage });
       if (callback) {
-        await callback({ text });
+        await callback({ text, success: false });
       }
       return { success: false };
     }
@@ -514,14 +514,14 @@ async function generateAndPreview(
       questions: workflow._meta.requiresClarification,
     });
     if (callback) {
-      await callback({ text });
+      await callback({ text, success: true });
     }
     return { success: true };
   }
 
   const text = await formatActionResponse(runtime, 'PREVIEW', buildPreviewData(workflow));
   if (callback) {
-    await callback({ text });
+    await callback({ text, success: true });
   }
   return { success: true };
 }

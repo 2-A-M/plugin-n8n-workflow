@@ -29,13 +29,27 @@ export async function extractKeywords(
   runtime: IAgentRuntime,
   userPrompt: string
 ): Promise<string[]> {
-  const result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
-    prompt: `${KEYWORD_EXTRACTION_SYSTEM_PROMPT}\n\nUser request: ${userPrompt}`,
-    schema: keywordExtractionSchema,
-  })) as KeywordExtractionResult;
+  let result: KeywordExtractionResult;
+  try {
+    result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
+      prompt: `${KEYWORD_EXTRACTION_SYSTEM_PROMPT}\n\nUser request: ${userPrompt}`,
+      schema: keywordExtractionSchema,
+    })) as KeywordExtractionResult;
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.error(
+      { src: 'plugin:n8n-workflow:generation:keywords', error: errMsg },
+      `Keyword extraction LLM call failed: ${errMsg}`
+    );
+    throw new Error(`Keyword extraction failed: ${errMsg}`);
+  }
 
   // Validate structure
   if (!result || !result.keywords || !Array.isArray(result.keywords)) {
+    logger.error(
+      { src: 'plugin:n8n-workflow:generation:keywords', result: JSON.stringify(result) },
+      'Invalid keyword extraction response structure'
+    );
     throw new Error('Invalid keyword extraction response: missing or invalid keywords array');
   }
 
@@ -79,10 +93,20 @@ export async function matchWorkflow(
 Available workflows:
 ${workflowList}`;
 
-    const result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
-      prompt: `${WORKFLOW_MATCHING_SYSTEM_PROMPT}\n\n${userPrompt}`,
-      schema: workflowMatchingSchema,
-    })) as WorkflowMatchResult;
+    let result: WorkflowMatchResult;
+    try {
+      result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
+        prompt: `${WORKFLOW_MATCHING_SYSTEM_PROMPT}\n\n${userPrompt}`,
+        schema: workflowMatchingSchema,
+      })) as WorkflowMatchResult;
+    } catch (innerError) {
+      const errMsg = innerError instanceof Error ? innerError.message : String(innerError);
+      logger.error(
+        { src: 'plugin:n8n-workflow:generation:matcher', error: errMsg },
+        `Workflow matching LLM call failed: ${errMsg}`
+      );
+      throw innerError;
+    }
 
     // Validate the returned ID actually exists in the provided list
     if (result.matchedWorkflowId && !workflows.some((wf) => wf.id === result.matchedWorkflowId)) {
@@ -143,7 +167,7 @@ ${userMessage}`,
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.error(
       { src: 'plugin:n8n-workflow:generation:intent', error: errMsg },
-      `classifyDraftIntent failed: ${errMsg}`
+      `classifyDraftIntent LLM call failed: ${errMsg}`
     );
     return {
       intent: 'show_preview',
@@ -294,11 +318,24 @@ export async function formatActionResponse(
   responseType: string,
   data: Record<string, unknown>
 ): Promise<string> {
-  const response = await runtime.useModel(ModelType.TEXT_SMALL, {
-    prompt: `${ACTION_RESPONSE_SYSTEM_PROMPT}\n\nType: ${responseType}\n\n${JSON.stringify(data)}`,
-  });
+  try {
+    const response = await runtime.useModel(ModelType.TEXT_SMALL, {
+      prompt: `${ACTION_RESPONSE_SYSTEM_PROMPT}\n\nType: ${responseType}\n\n${JSON.stringify(data)}`,
+    });
 
-  return (response as string).trim();
+    return (response as string).trim();
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.error(
+      { src: 'plugin:n8n-workflow:generation:format', error: errMsg, responseType },
+      `formatActionResponse LLM call failed: ${errMsg}`
+    );
+    // Return a fallback message so the action can still communicate with the user
+    if (responseType === 'ERROR') {
+      return `An error occurred: ${data.error || 'Unknown error'}`;
+    }
+    return `Operation completed (type: ${responseType})`;
+  }
 }
 
 export async function assessFeasibility(
@@ -322,14 +359,26 @@ export async function assessFeasibility(
     .map((r) => r.node.displayName)
     .join(', ');
 
-  const result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
-    prompt:
-      `${FEASIBILITY_CHECK_PROMPT}\n\n## User Request\n${userPrompt}` +
-      `\n\n## Removed Integrations (unavailable)\n${removedList}` +
-      `\n\n## Available Service Integrations\n${availableList}` +
-      `\n\n## Available Utility Nodes\n${utilityList}`,
-    schema: feasibilitySchema,
-  })) as FeasibilityResult;
+  try {
+    const result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
+      prompt:
+        `${FEASIBILITY_CHECK_PROMPT}\n\n## User Request\n${userPrompt}` +
+        `\n\n## Removed Integrations (unavailable)\n${removedList}` +
+        `\n\n## Available Service Integrations\n${availableList}` +
+        `\n\n## Available Utility Nodes\n${utilityList}`,
+      schema: feasibilitySchema,
+    })) as FeasibilityResult;
 
-  return result;
+    return result;
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.error(
+      { src: 'plugin:n8n-workflow:generation:feasibility', error: errMsg },
+      `Feasibility assessment LLM call failed: ${errMsg}`
+    );
+    return {
+      feasible: false,
+      reason: `Feasibility check failed: ${errMsg}`,
+    };
+  }
 }

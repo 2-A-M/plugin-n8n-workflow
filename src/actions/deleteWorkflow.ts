@@ -88,6 +88,7 @@ export const deleteWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: 'N8n Workflow service is not available.',
+          success: false,
         });
       }
       return { success: false };
@@ -101,6 +102,7 @@ export const deleteWorkflowAction: Action = {
         if (callback) {
           await callback({
             text: 'No workflows available to delete.',
+            success: false,
           });
         }
         return { success: false };
@@ -115,6 +117,7 @@ export const deleteWorkflowAction: Action = {
         if (callback) {
           await callback({
             text: `Could not identify which workflow to delete. Available workflows:\n${workflowList}`,
+            success: false,
           });
         }
         return { success: false };
@@ -130,6 +133,7 @@ export const deleteWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: '🗑️  Workflow deleted permanently.',
+          success: true,
         });
       }
 
@@ -144,6 +148,7 @@ export const deleteWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: `Failed to delete workflow: ${errorMessage}`,
+          success: false,
         });
       }
 

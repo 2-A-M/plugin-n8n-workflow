@@ -91,6 +91,7 @@ export const activateWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: 'N8n Workflow service is not available.',
+          success: false,
         });
       }
       return { success: false };
@@ -117,6 +118,7 @@ export const activateWorkflowAction: Action = {
           if (callback) {
             await callback({
               text: 'I still need a bit more information before I can create this workflow. Could you answer the questions above?',
+              success: false,
             });
           }
           return { success: false };
@@ -139,6 +141,7 @@ export const activateWorkflowAction: Action = {
           if (callback) {
             await callback({
               text: `The following services need to be connected before deploying:\n\n${connList}\n\nPlease connect them and try again.`,
+              success: true,
             });
           }
           return { success: true };
@@ -153,7 +156,7 @@ export const activateWorkflowAction: Action = {
         responseText += '\nAll credentials configured — workflow is ready to run!';
 
         if (callback) {
-          await callback({ text: responseText });
+          await callback({ text: responseText, success: true });
         }
 
         return { success: true, data: result };
@@ -167,6 +170,7 @@ export const activateWorkflowAction: Action = {
         if (callback) {
           await callback({
             text: 'No workflows available to activate.',
+            success: false,
           });
         }
         return { success: false };
@@ -181,6 +185,7 @@ export const activateWorkflowAction: Action = {
         if (callback) {
           await callback({
             text: `Could not identify which workflow to activate. Available workflows:\n${workflowList}`,
+            success: false,
           });
         }
         return { success: false };
@@ -196,6 +201,7 @@ export const activateWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: '✅ Workflow activated and is now running.',
+          success: true,
         });
       }
 
@@ -210,6 +216,7 @@ export const activateWorkflowAction: Action = {
       if (callback) {
         await callback({
           text: `Failed to activate workflow: ${errorMessage}`,
+          success: false,
         });
       }
 
