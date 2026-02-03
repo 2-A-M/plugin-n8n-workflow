@@ -1,22 +1,15 @@
 import { type IAgentRuntime, type Memory, type State, type UUID } from '@elizaos/core';
 
-export function buildConversationContext(
-  runtime: IAgentRuntime,
-  message: Memory,
-  state: State | undefined
-): string {
-  const recentMessages = (state?.data?.recentMessages as Memory[]) || [];
+export function buildConversationContext(message: Memory, state: State | undefined): string {
+  const raw = state?.values?.recentMessages;
+  const recentMessages = typeof raw === 'string' ? raw : '';
+  const currentText = message.content?.text ?? '';
 
-  if (recentMessages.length === 0) {
-    return message.content.text || '';
+  if (!recentMessages) {
+    return currentText;
   }
 
-  const context = recentMessages
-    .slice(-5)
-    .map((m) => `${m.entityId === runtime.agentId ? 'Assistant' : 'User'}: ${m.content.text}`)
-    .join('\n');
-
-  return `Recent conversation:\n${context}\n\nCurrent request: ${message.content.text || ''}`;
+  return `${recentMessages}\n\nCurrent request: ${currentText}`;
 }
 
 export async function getUserTagName(runtime: IAgentRuntime, userId: string): Promise<string> {

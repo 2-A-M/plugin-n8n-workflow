@@ -269,7 +269,7 @@ export const createWorkflowAction: Action = {
     const userText = (content.text ?? '').trim();
     const userId = message.entityId;
     const cacheKey = `workflow_draft:${userId}`;
-    const generationContext = buildConversationContext(runtime, message, state);
+    const generationContext = buildConversationContext(message, state);
 
     try {
       let existingDraft = await runtime.getCache<WorkflowDraft>(cacheKey);

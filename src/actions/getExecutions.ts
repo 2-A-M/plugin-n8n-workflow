@@ -98,7 +98,7 @@ export const getExecutionsAction: Action = {
         return { success: false };
       }
 
-      const context = buildConversationContext(runtime, message, state);
+      const context = buildConversationContext(message, state);
       const matchResult = await matchWorkflow(runtime, context, workflows);
 
       if (!matchResult.matchedWorkflowId || matchResult.confidence === 'none') {
