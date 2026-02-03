@@ -317,7 +317,7 @@ export const createWorkflowAction: Action = {
               if (callback) {
                 await callback({ text, success: true });
               }
-              return { success: true };
+              return { success: true, data: { awaitingUserInput: true } };
             }
 
             await runtime.deleteCache(cacheKey);
@@ -372,7 +372,7 @@ export const createWorkflowAction: Action = {
               if (callback) {
                 await callback({ text, success: true });
               }
-              return { success: true };
+              return { success: true, data: { awaitingUserInput: true } };
             }
 
             const text = await formatActionResponse(
@@ -383,7 +383,7 @@ export const createWorkflowAction: Action = {
             if (callback) {
               await callback({ text, success: true });
             }
-            return { success: true };
+            return { success: true, data: { awaitingUserInput: true } };
           }
 
           case 'new': {
@@ -419,7 +419,7 @@ export const createWorkflowAction: Action = {
               if (callback) {
                 await callback({ text, success: true });
               }
-              return { success: true };
+              return { success: true, data: { awaitingUserInput: true } };
             }
           }
 
@@ -436,7 +436,7 @@ export const createWorkflowAction: Action = {
             if (callback) {
               await callback({ text, success: true });
             }
-            return { success: true };
+            return { success: true, data: { awaitingUserInput: true } };
           }
         }
       }
@@ -516,12 +516,12 @@ async function generateAndPreview(
     if (callback) {
       await callback({ text, success: true });
     }
-    return { success: true };
+    return { success: true, data: { awaitingUserInput: true } };
   }
 
   const text = await formatActionResponse(runtime, 'PREVIEW', buildPreviewData(workflow));
   if (callback) {
     await callback({ text, success: true });
   }
-  return { success: true };
+  return { success: true, data: { awaitingUserInput: true } };
 }

@@ -50,7 +50,8 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
+      expect(result?.data).toEqual({ awaitingUserInput: true });
       expect(mockService.generateWorkflowDraft).toHaveBeenCalledTimes(1);
       expect(mockService.deployWorkflow).not.toHaveBeenCalled();
 
@@ -108,7 +109,8 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
+      expect(result?.data).toEqual({ awaitingUserInput: true });
       const calls = (callback as any).mock.calls;
       const lastText = calls[calls.length - 1][0].text;
       // Clarification questions should be in the data passed to the LLM
@@ -131,7 +133,7 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(false);
+      expect(result?.success).toBe(false);
       // Callback should be called (LLM formats EMPTY_PROMPT response)
       expect((callback as any).mock.calls.length).toBeGreaterThan(0);
     });
@@ -151,7 +153,7 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(false);
+      expect(result?.success).toBe(false);
     });
 
     test('handles service error gracefully', async () => {
@@ -174,7 +176,7 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(false);
+      expect(result?.success).toBe(false);
       const calls = (callback as any).mock.calls;
       const errorText = calls[calls.length - 1][0].text;
       expect(errorText).toContain('LLM generation failed');
@@ -240,8 +242,8 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
-      expect(result.data).toBeDefined();
+      expect(result?.success).toBe(true);
+      expect(result?.data).toBeDefined();
       expect(mockService.deployWorkflow).toHaveBeenCalledTimes(1);
       expect(mockService.generateWorkflowDraft).not.toHaveBeenCalled();
 
@@ -277,7 +279,7 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
       expect(runtime.deleteCache).toHaveBeenCalled();
 
       // Callback called with cancelled response containing workflow name
@@ -313,7 +315,8 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
+      expect(result?.data).toEqual({ awaitingUserInput: true });
       // Should call modifyWorkflowDraft (hybrid), NOT generateWorkflowDraft (from scratch)
       expect(mockService.modifyWorkflowDraft).toHaveBeenCalledTimes(1);
       expect(mockService.generateWorkflowDraft).not.toHaveBeenCalled();
@@ -379,7 +382,8 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
+      expect(result?.data).toEqual({ awaitingUserInput: true });
 
       // Draft should be restored in cache
       expect(runtime.setCache).toHaveBeenCalled();
@@ -419,7 +423,7 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
       // Should call modifyWorkflowDraft (override confirm → modify), NOT deployWorkflow
       expect(mockService.modifyWorkflowDraft).toHaveBeenCalledTimes(1);
       expect(mockService.deployWorkflow).not.toHaveBeenCalled();
@@ -494,7 +498,7 @@ describe('CREATE_N8N_WORKFLOW action', () => {
         callback
       );
 
-      expect(result.success).toBe(true);
+      expect(result?.success).toBe(true);
 
       // Should NOT clear cache — draft stays for retry after auth
       expect(runtime.deleteCache).not.toHaveBeenCalled();
