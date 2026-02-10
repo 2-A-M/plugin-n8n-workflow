@@ -332,8 +332,45 @@ describe('CREATE_N8N_WORKFLOW action', () => {
       const lastText = calls[calls.length - 1][0].text;
       expect(lastText).toContain('Modified Workflow'); // modified workflow name
 
-      // Should store updated draft in cache
+      // Should store updated draft in cache with originMessageId
       expect(runtime.setCache).toHaveBeenCalled();
+      const setCacheCall = (runtime.setCache as any).mock.calls.find((c: unknown[]) =>
+        (c[0] as string).startsWith('workflow_draft:')
+      );
+      expect(setCacheCall).toBeDefined();
+      const storedDraft = setCacheCall[1] as WorkflowDraft;
+      expect(storedDraft.originMessageId).toBe(message.id);
+    });
+
+    test('second call with same message.id after modify skips without callback (anti-loop)', async () => {
+      const draft = createDraftInCache();
+      draft.originMessageId = 'msg-001';
+
+      const mockService = createMockService();
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: mockService },
+        cache: { 'workflow_draft:user-001': draft },
+      });
+
+      const message = createMockMessage({ content: { text: 'Oui' } });
+      const callback = createMockCallback();
+
+      const result = await createWorkflowAction.handler(
+        runtime,
+        message,
+        createMockState(),
+        {},
+        callback
+      );
+
+      expect(result?.success).toBe(true);
+      expect(result?.data).toEqual({ awaitingUserInput: true });
+      // No service calls — skipped entirely
+      expect(mockService.modifyWorkflowDraft).not.toHaveBeenCalled();
+      expect(mockService.generateWorkflowDraft).not.toHaveBeenCalled();
+      expect(mockService.deployWorkflow).not.toHaveBeenCalled();
+      // No callback — agent gets no output to loop on
+      expect((callback as any).mock.calls.length).toBe(0);
     });
 
     test('expired draft is cleared and treated as new', async () => {
@@ -510,6 +547,79 @@ describe('CREATE_N8N_WORKFLOW action', () => {
       expect(resultText).toContain('https://auth.example.com/stripe');
       expect(resultText).toContain('gmailOAuth2Api');
       expect(resultText).toContain('stripeApi');
+    });
+  });
+
+  // ==========================================================================
+  // MODIFY INCLUDES CHANGES IN PREVIEW
+  // ==========================================================================
+
+  describe('handler - modify includes changes in preview', () => {
+    test('preview data includes changed parameters after modify', async () => {
+      const draft: WorkflowDraft = {
+        workflow: {
+          name: 'Gmail Forward',
+          nodes: [
+            {
+              name: 'Gmail Trigger',
+              type: 'n8n-nodes-base.gmailTrigger',
+              typeVersion: 1,
+              position: [0, 0] as [number, number],
+              parameters: { pollTimes: { item: [{ mode: 'everyMinute' }] } },
+            },
+            {
+              name: 'Forward Email',
+              type: 'n8n-nodes-base.gmail',
+              typeVersion: 2,
+              position: [200, 0] as [number, number],
+              parameters: { operation: 'send', sendTo: 'old@example.com' },
+              credentials: { gmailOAuth2Api: { id: 'cred-1', name: 'Gmail' } },
+            },
+          ],
+          connections: {
+            'Gmail Trigger': { main: [[{ node: 'Forward Email', type: 'main', index: 0 }]] },
+          },
+        },
+        prompt: 'Forward emails',
+        userId: 'user-001',
+        createdAt: Date.now(),
+      };
+
+      const modifiedWorkflow = {
+        ...draft.workflow,
+        nodes: [
+          draft.workflow.nodes[0],
+          {
+            ...draft.workflow.nodes[1],
+            parameters: { operation: 'send', sendTo: 'new@example.com' },
+          },
+        ],
+      };
+
+      const mockService = createMockService({
+        modifyWorkflowDraft: mock(() => Promise.resolve(modifiedWorkflow)),
+      });
+
+      const runtime = createMockRuntime({
+        services: { [N8N_WORKFLOW_SERVICE_TYPE]: mockService },
+        useModel: createUseModelMock({ intent: 'modify', reason: 'User wants to modify' }),
+        cache: { 'workflow_draft:user-001': draft },
+      });
+
+      const callback = createMockCallback();
+
+      await createWorkflowAction.handler(
+        runtime,
+        createMockMessage({ content: { text: 'change email to new@example.com' } }),
+        createMockState(),
+        { intent: 'modify', modification: 'change email to new@example.com' },
+        callback
+      );
+
+      // The callback text should contain the new email (changes are passed to formatActionResponse)
+      const calls = (callback as any).mock.calls;
+      const lastText = calls[calls.length - 1][0].text;
+      expect(lastText).toContain('new@example.com');
     });
   });
 

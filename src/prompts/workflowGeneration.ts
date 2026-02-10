@@ -144,8 +144,9 @@ If a service the user mentioned is not in the available nodes, do NOT include it
 Use \`_meta.assumptions\` to document when you used an alternative integration.
 
 **When creating nodes:**
--  Use required parameters from the node's type definition.
--  For options, pick the most common or user-specified value.
+-  **CRITICAL: Use EXACTLY the parameter names from each node's "properties" definitions.** Do NOT guess or use names from your training data. If the definition says \`modelId\`, use \`modelId\` — not \`model\`. If it says \`responses\`, use \`responses\` — not \`prompt\`. The exact \`name\` field in each property definition is what goes into \`parameters\`.
+-  For \`fixedCollection\` type properties, values MUST be nested inside a \`"values"\` array of objects. Example: \`"responses": { "values": [{ "content": "..." }] }\`
+-  For \`options\` type parameters, pick the most common or user-specified value from the property's \`options\` array.
 -  Use unique names for each node.
 -  Connect nodes using the \`connections\` object, with \`"main"\` as the default connection type.
 -  For nodes requiring authentication, include the \`credentials\` field with the appropriate credential type.

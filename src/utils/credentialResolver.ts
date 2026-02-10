@@ -24,7 +24,8 @@ export async function resolveCredentials(
   config: N8nPluginConfig,
   credStore: N8nCredentialStoreApi | null,
   credProvider: CredentialProvider | null,
-  apiClient: N8nApiClient | null
+  apiClient: N8nApiClient | null,
+  tagName: string
 ): Promise<CredentialResolutionResult> {
   const requiredCredTypes = extractRequiredCredentialTypes(workflow);
 
@@ -47,7 +48,8 @@ export async function resolveCredentials(
       credStore,
       credProvider,
       apiClient,
-      missingConnections
+      missingConnections,
+      tagName
     );
 
     if (credId) {
@@ -71,7 +73,8 @@ async function resolveOneCredential(
   credStore: N8nCredentialStoreApi | null,
   credProvider: CredentialProvider | null,
   apiClient: N8nApiClient | null,
-  missingConnections: MissingConnection[]
+  missingConnections: MissingConnection[],
+  tagName: string
 ): Promise<string | null> {
   // 1. Credential store DB
   const cachedId = await credStore?.get(userId, credType);
@@ -105,8 +108,9 @@ async function resolveOneCredential(
           missingConnections.push({ credType });
           return null;
         }
+        const credName = `${credType}_${tagName}`;
         const n8nCred = await apiClient.createCredential({
-          name: credType,
+          name: credName,
           type: credType,
           data: result.data,
         });

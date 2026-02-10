@@ -455,7 +455,7 @@ User Prompt: "Send me Stripe payment summaries every Monday via Gmail"
 │     Max: 5 keywords                      │
 └──────────────────┬───────────────────────┘
                    ▼
-┌──────────────────────────────────────────┐
+┌────────────────────�����────────────────────┐
 │  2. searchNodes (local catalog)          │
 │     457 embedded n8n node definitions    │
 │     Keyword scoring:                     │
@@ -471,6 +471,7 @@ User Prompt: "Send me Stripe payment summaries every Monday via Gmail"
 ┌──────────────────────────────────────────┐
 │  3. generateWorkflow (TEXT_LARGE)        │
 │     Input:  user prompt + node defs      │
+│           + output schemas (from index)  │
 │     Config: temperature 0, JSON mode     │
 │     Output: complete n8n workflow JSON    │
 │     Includes: _meta.assumptions,         │
@@ -479,7 +480,36 @@ User Prompt: "Send me Stripe payment summaries every Monday via Gmail"
 └──────────────────┬───────────────────────┘
                    ▼
 ┌──────────────────────────────────────────┐
-│  4. validateWorkflow                     │
+│  4. normalizeTriggerSimpleParam          │
+│     Set simple=true on trigger nodes     │
+└──────────────────┬───────────────────────┘
+                   ▼
+┌──────────────────────────────────────────┐
+│  5. correctOptionParameters              │
+│     Fix node types, versions, resources, │
+│     and operations against the catalog   │
+└──────────────────┬───────────────────────┘
+                   ▼
+┌──────────────────────────────────────────┐
+│  6. detectUnknownParameters              │
+│     + correctParameterNames (LLM)        │
+│     Fix param names not in catalog       │
+└──────────────────┬───────────────────────┘
+                   ▼
+┌──────────────────────────────────────────┐
+│  7. validateOutputReferences             │
+│     + correctFieldReferences (LLM)       │
+│     Validate $json expressions against   │
+│     output schemas, fix invalid paths    │
+└──────────────────┬───────────────────────┘
+                   ▼
+┌──────────────────────────────────────────┐
+│  8. ensureExpressionPrefix               │
+│     Wrap {{ }} with ={{ }} for n8n       │
+└───────��──────────┬───────────────────────┘
+                   ▼
+┌──────────────────────────────────────────┐
+│  9. validateWorkflow                     │
 │     - nodes array exists, non-empty      │
 │     - connections object valid           │
 │     - required fields on each node       │
@@ -492,7 +522,7 @@ User Prompt: "Send me Stripe payment summaries every Monday via Gmail"
 └──────────────────┬───────────────────────┘
                    ▼
 ┌──────────────────────────────────────────┐
-│  5. injectCatalogClarifications          │
+│  10. injectCatalogClarifications         │
 │     Check each node against catalog:     │
 │     - validateNodeParameters             │
 │       → missing required params?         │
@@ -502,7 +532,7 @@ User Prompt: "Send me Stripe payment summaries every Monday via Gmail"
 └──────────────────┬───────────────────────┘
                    ▼
 ┌──────────────────────────────────────────┐
-│  6. positionNodes                        │
+│  11. positionNodes                       │
 │     BFS layout from trigger nodes:       │
 │     - Triggers at x=250                  │
 │     - Each level: x += 250              │
@@ -847,6 +877,7 @@ src/
 │   ├── keywordExtraction.ts     # System prompt for keyword extraction
 │   ├── workflowMatching.ts      # System prompt for semantic matching
 │   ├── draftIntent.ts           # System prompt for intent classification
+│   ├── parameterCorrection.ts   # System prompt for parameter name correction
 │   └── actionResponse.ts        # System prompt for response formatting
 ├── schemas/
 │   ├── keywordExtraction.ts     # JSON schema for keyword output
@@ -854,6 +885,11 @@ src/
 │   └── draftIntent.ts           # JSON schema for intent output
 ├── types/
 │   └── index.ts                 # All TypeScript interfaces and types
+├── data/                        # Generated data (run `bun run crawl`)
+│   ├── defaultNodes.json        # 457 n8n node definitions (types, params, versions)
+│   ├── schemaIndex.json         # Output schemas per node/resource/operation
+│   ├── triggerSchemaIndex.json  # Trigger output schemas (captured from n8n)
+│   └── langchain-output-schemas.json  # Manual overrides for langchain nodes
 ├── db/
 │   └── schema.ts                # Drizzle ORM schema (PostgreSQL)
 └── utils/
@@ -862,19 +898,79 @@ src/
     ├── context.ts               # Conversation context builder + user tag naming
     ├── credentialResolver.ts    # 4-step credential resolution chain
     ├── generation.ts            # LLM utilities (extract, generate, match, classify, format)
-    └── workflow.ts              # Validation, positioning, auto-fix
+    ├── outputSchema.ts          # Output schema validation + expression parsing
+    └── workflow.ts              # Validation, positioning, corrections, auto-fix
+
+scripts/
+├── crawl.ts                     # Master crawl (runs all 3 steps below)
+├── crawl-nodes.ts               # Step 1: Extract node defs from n8n-nodes-base
+├── crawl-schemas.ts             # Step 2: Extract output schemas from __schema__/ dirs
+└── capture-trigger-schemas.ts   # Step 3: Capture trigger schemas from live n8n
 ```
+
+---
+
+## Data Generation
+
+The plugin relies on three generated data files in `src/data/`. These are **not committed to git** — they are regenerated by `bun run crawl`.
+
+### `bun run crawl`
+
+Runs three steps:
+
+| Step | Script | Generates | Requires |
+|------|--------|-----------|----------|
+| 1/3 | `crawl-nodes.ts` | `defaultNodes.json` — 457 node definitions with parameters, versions, credentials | n8n-nodes-base package |
+| 2/3 | `crawl-schemas.ts` | `schemaIndex.json` — output schemas per node/resource/operation | n8n-nodes-base `__schema__/` dirs + langchain overrides |
+| 3/3 | `capture-trigger-schemas.ts` | `triggerSchemaIndex.json` — trigger output schemas | `N8N_HOST` + `N8N_API_KEY` env vars |
+
+**Step 3 is skipped** if `N8N_HOST` / `N8N_API_KEY` are not set (a warning is printed).
+
+### Output Schema System
+
+The LLM receives output schemas during workflow generation to prevent hallucinated field paths:
+
+- **n8n-nodes-base nodes**: Schemas are crawled from `__schema__/` directories in the npm package
+- **@n8n/n8n-nodes-langchain nodes**: No `__schema__/` dirs exist — schemas are defined in `src/data/langchain-output-schemas.json` and merged at crawl time
+- **Trigger nodes**: Schemas are captured from real n8n executions via `capture-trigger-schemas.ts`
+
+The generation prompt includes output schemas for all relevant nodes, so the LLM uses correct field paths like `$json.output[0].content[0].text` instead of inventing wrong ones like `$json.choices[0].message.content`.
+
+As a safety net, `validateOutputReferences` checks all `$json` expressions against schemas post-generation and `correctFieldReferences` (LLM) fixes any remaining invalid paths.
 
 ---
 
 ## Development
 
+### Prerequisites
+
+| Requirement | Purpose |
+|-------------|---------|
+| [Bun](https://bun.sh) | Runtime and package manager |
+| `N8N_HOST` | n8n instance URL (for trigger schema capture) |
+| `N8N_API_KEY` | n8n API key (for trigger schema capture) |
+
+### Setup
+
 ```bash
-bun install          # install dependencies
-bun run build        # compile TypeScript
-bun test             # run tests (162 tests)
-bun run lint         # lint
-bun run format       # format
+bun install                                    # Install dependencies
+N8N_HOST=https://... N8N_API_KEY=... bun run crawl  # Generate data files
+bun run build                                  # Compile TypeScript
+```
+
+### Commands
+
+```bash
+bun run crawl          # Generate all data files (nodes + schemas + triggers)
+bun run crawl:nodes    # Generate only defaultNodes.json
+bun run crawl:schemas  # Generate only schemaIndex.json
+bun run build          # Compile TypeScript
+bun test               # Run all tests (~260 tests)
+bun run test:unit      # Run unit tests only
+bun run test:integration # Run integration tests only
+bun run test:e2e       # Run e2e tests only
+bun run lint           # Lint
+bun run format         # Format
 ```
 
 ## License

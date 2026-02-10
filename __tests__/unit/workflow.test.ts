@@ -1,5 +1,14 @@
 import { describe, test, expect } from 'bun:test';
-import { validateWorkflow, positionNodes } from '../../src/utils/workflow';
+import {
+  validateWorkflow,
+  positionNodes,
+  validateOutputReferences,
+  validateNodeParameters,
+  validateNodeInputs,
+  correctOptionParameters,
+  detectUnknownParameters,
+  ensureExpressionPrefix,
+} from '../../src/utils/workflow';
 import {
   createValidWorkflow,
   createWorkflowWithoutPositions,
@@ -9,6 +18,8 @@ import {
   createInvalidWorkflow_duplicateNames,
   createTriggerNode,
   createGmailNode,
+  createGmailTriggerNode,
+  createGithubTriggerNode,
   createSlackNode,
 } from '../fixtures/workflows';
 
@@ -244,5 +255,700 @@ describe('positionNodes', () => {
     for (let i = 1; i < positions.length; i++) {
       expect(positions[i]).toBeGreaterThan(positions[i - 1]);
     }
+  });
+});
+
+// ============================================================================
+// validateOutputReferences
+// ============================================================================
+
+describe('validateOutputReferences', () => {
+  test('valid trigger field passes (Gmail Subject)', () => {
+    const workflow = {
+      name: 'Gmail to Slack',
+      nodes: [
+        createGmailTriggerNode(),
+        createSlackNode({ parameters: { text: '={{ $json.Subject }}' } }),
+      ],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs).toEqual([]);
+  });
+
+  test('detects wrong case on trigger field (subject vs Subject)', () => {
+    const workflow = {
+      name: 'Gmail to Slack',
+      nodes: [
+        createGmailTriggerNode(),
+        createSlackNode({ parameters: { text: '={{ $json.subject }}' } }),
+      ],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs.length).toBe(1);
+    expect(refs[0].field).toBe('subject');
+    expect(refs[0].sourceNodeType).toBe('n8n-nodes-base.gmailTrigger');
+    expect(refs[0].availableFields).toContain('Subject (string)');
+  });
+
+  test('valid nested trigger field (GitHub body.repository.name)', () => {
+    const workflow = {
+      name: 'GitHub to Slack',
+      nodes: [
+        createGithubTriggerNode(),
+        createSlackNode({ parameters: { text: '={{ $json.body.repository.name }}' } }),
+      ],
+      connections: {
+        'GitHub Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs).toEqual([]);
+  });
+
+  test('detects invalid nested trigger field', () => {
+    const workflow = {
+      name: 'GitHub to Slack',
+      nodes: [
+        createGithubTriggerNode(),
+        createSlackNode({ parameters: { text: '={{ $json.body.repo }}' } }),
+      ],
+      connections: {
+        'GitHub Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs.length).toBe(1);
+    expect(refs[0].field).toBe('body.repo');
+  });
+
+  test('skips unknown trigger type (no false positives)', () => {
+    const workflow = {
+      name: 'Unknown trigger',
+      nodes: [
+        createTriggerNode({ name: 'My Trigger', type: 'n8n-nodes-base.unknownTrigger' }),
+        createSlackNode({ parameters: { text: '={{ $json.anything }}' } }),
+      ],
+      connections: {
+        'My Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs).toEqual([]);
+  });
+
+  test('validates non-trigger node (Gmail resource/operation schema)', () => {
+    const workflow = {
+      name: 'Gmail getAll to Slack',
+      nodes: [
+        createTriggerNode(),
+        createGmailNode({
+          parameters: { resource: 'message', operation: 'getAll' },
+        }),
+        createSlackNode({ parameters: { text: '={{ $json.subject }}' } }),
+      ],
+      connections: {
+        'Schedule Trigger': {
+          main: [[{ node: 'Gmail', type: 'main', index: 0 }]],
+        },
+        Gmail: {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs).toEqual([]);
+  });
+
+  test('mixed valid and invalid expressions', () => {
+    const workflow = {
+      name: 'Gmail to Slack',
+      nodes: [
+        createGmailTriggerNode(),
+        createSlackNode({
+          parameters: { text: '={{ $json.Subject }} from {{ $json.sender }}' },
+        }),
+      ],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs.length).toBe(1);
+    expect(refs[0].field).toBe('sender');
+  });
+
+  test('no expressions returns empty', () => {
+    const workflow = {
+      name: 'Static workflow',
+      nodes: [createGmailTriggerNode(), createSlackNode({ parameters: { text: 'Hello world' } })],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs).toEqual([]);
+  });
+
+  test('resolves $("NodeName") to correct source node schema', () => {
+    // Chain: Gmail Trigger → Gmail (getAll) → Slack
+    // Slack references Gmail Trigger via $('Gmail Trigger').item.json.Subject (valid)
+    // and Gmail via $json.subject (direct upstream, also valid)
+    const workflow = {
+      name: 'Named ref test',
+      nodes: [
+        createGmailTriggerNode(),
+        createGmailNode({ parameters: { resource: 'message', operation: 'getAll' } }),
+        createSlackNode({
+          parameters: {
+            text: "={{ $('Gmail Trigger').item.json.Subject }} - {{ $json.subject }}",
+          },
+        }),
+      ],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Gmail', type: 'main', index: 0 }]],
+        },
+        Gmail: {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    // Both should be valid — Subject exists in Gmail Trigger schema, subject exists in Gmail getAll schema
+    expect(refs).toEqual([]);
+  });
+
+  test('detects invalid field on named node ref', () => {
+    // Chain: Gmail Trigger → Gmail (getAll) → Slack
+    // Slack uses $('Gmail Trigger').item.json.nonExistentField — should be invalid
+    const workflow = {
+      name: 'Bad named ref',
+      nodes: [
+        createGmailTriggerNode(),
+        createGmailNode({ parameters: { resource: 'message', operation: 'getAll' } }),
+        createSlackNode({
+          parameters: {
+            text: "={{ $('Gmail Trigger').item.json.nonExistentField }}",
+          },
+        }),
+      ],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Gmail', type: 'main', index: 0 }]],
+        },
+        Gmail: {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs.length).toBe(1);
+    expect(refs[0].field).toBe('nonExistentField');
+    expect(refs[0].sourceNodeName).toBe('Gmail Trigger');
+  });
+
+  test('named ref uses named node schema, not direct upstream', () => {
+    // Chain: Gmail Trigger → Gmail (getAll) → Slack
+    // Slack uses $('Gmail Trigger').item.json.From — valid in trigger schema
+    // Without the fix, this would validate against Gmail (getAll) schema
+    const workflow = {
+      name: 'Cross-node ref',
+      nodes: [
+        createGmailTriggerNode(),
+        createGmailNode({ parameters: { resource: 'message', operation: 'getAll' } }),
+        createSlackNode({
+          parameters: {
+            text: "={{ $('Gmail Trigger').item.json.From }}",
+          },
+        }),
+      ],
+      connections: {
+        'Gmail Trigger': {
+          main: [[{ node: 'Gmail', type: 'main', index: 0 }]],
+        },
+        Gmail: {
+          main: [[{ node: 'Slack', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const refs = validateOutputReferences(workflow);
+    expect(refs).toEqual([]);
+  });
+});
+
+// ============================================================================
+// validateNodeParameters
+// ============================================================================
+
+describe('validateNodeParameters', () => {
+  test('detects missing required parameters', () => {
+    // Default Gmail fixture is missing required "Email Type" parameter
+    const warnings = validateNodeParameters(createValidWorkflow());
+    expect(warnings.some((w) => w.includes('Gmail') && w.includes('required parameter'))).toBe(
+      true
+    );
+  });
+
+  test('skips unknown node types', () => {
+    const workflow = {
+      name: 'Unknown',
+      nodes: [
+        {
+          name: 'Custom',
+          type: 'n8n-nodes-community.unknownNode',
+          typeVersion: 1,
+          position: [0, 0] as [number, number],
+          parameters: {},
+        },
+      ],
+      connections: {},
+    };
+    const warnings = validateNodeParameters(workflow);
+    expect(warnings).toEqual([]);
+  });
+});
+
+// ============================================================================
+// validateNodeInputs
+// ============================================================================
+
+describe('validateNodeInputs', () => {
+  test('returns no warnings for properly connected workflow', () => {
+    const warnings = validateNodeInputs(createValidWorkflow());
+    expect(warnings).toEqual([]);
+  });
+
+  test('warns about action node with no incoming connection', () => {
+    const workflow = {
+      name: 'Disconnected',
+      nodes: [createTriggerNode(), createGmailNode()],
+      connections: {},
+    };
+    const warnings = validateNodeInputs(workflow);
+    expect(warnings.some((w) => w.includes('Gmail'))).toBe(true);
+  });
+
+  test('does not warn about trigger nodes without incoming connections', () => {
+    const workflow = {
+      name: 'Only trigger',
+      nodes: [createTriggerNode()],
+      connections: {},
+    };
+    const warnings = validateNodeInputs(workflow);
+    expect(warnings).toEqual([]);
+  });
+});
+
+// ============================================================================
+// correctOptionParameters
+// ============================================================================
+
+describe('correctOptionParameters', () => {
+  test('corrects invalid resource and cascading operation (OpenAI chat→text)', () => {
+    const workflow = {
+      name: 'OpenAI Test',
+      nodes: [
+        createTriggerNode(),
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 1.8,
+          position: [500, 300] as [number, number],
+          parameters: { resource: 'chat', operation: 'message' },
+        },
+      ],
+      connections: {
+        'Schedule Trigger': {
+          main: [[{ node: 'OpenAI', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const fixes = correctOptionParameters(workflow);
+    expect(fixes).toBeGreaterThanOrEqual(2); // typeVersion + resource (+ possibly operation)
+    const openai = workflow.nodes[1];
+    expect(openai.typeVersion).toBe(2.1);
+    expect(openai.parameters.resource).toBe('text');
+    expect(openai.parameters.operation).toBe('response');
+  });
+
+  test('does not touch valid parameters', () => {
+    const workflow = {
+      name: 'Valid Gmail',
+      nodes: [createTriggerNode(), createGmailNode()],
+      connections: {
+        'Schedule Trigger': {
+          main: [[{ node: 'Gmail', type: 'main', index: 0 }]],
+        },
+      },
+    };
+    const fixes = correctOptionParameters(workflow);
+    expect(fixes).toBe(0);
+    expect(workflow.nodes[1].parameters.resource).toBe('message');
+    expect(workflow.nodes[1].parameters.operation).toBe('send');
+  });
+
+  test('corrects typeVersion when not in catalog version list', () => {
+    const workflow = {
+      name: 'Bad Version',
+      nodes: [
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 1.4,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'text', operation: 'response' },
+        },
+      ],
+      connections: {},
+    };
+    const fixes = correctOptionParameters(workflow);
+    expect(fixes).toBeGreaterThanOrEqual(1);
+    expect(workflow.nodes[0].typeVersion).toBe(2.1);
+  });
+
+  test('skips unknown node types', () => {
+    const workflow = {
+      name: 'Unknown',
+      nodes: [
+        {
+          name: 'Custom',
+          type: 'n8n-nodes-community.unknown',
+          typeVersion: 1,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'whatever' },
+        },
+      ],
+      connections: {},
+    };
+    const fixes = correctOptionParameters(workflow);
+    expect(fixes).toBe(0);
+  });
+
+  test('corrects wrong node type prefix (n8n-nodes-base.openAi → langchain)', () => {
+    const workflow = {
+      name: 'Wrong Prefix',
+      nodes: [
+        {
+          name: 'OpenAI',
+          type: 'n8n-nodes-base.openAi',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'text', operation: 'response' },
+        },
+      ],
+      connections: {},
+    };
+    const fixes = correctOptionParameters(workflow);
+    expect(fixes).toBeGreaterThanOrEqual(1);
+    expect(workflow.nodes[0].type).toBe('@n8n/n8n-nodes-langchain.openAi');
+  });
+
+  test('skips dependent options not visible for current resource', () => {
+    const workflow = {
+      name: 'OpenAI Image',
+      nodes: [
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'image', operation: 'generate' },
+        },
+      ],
+      connections: {},
+    };
+    const fixes = correctOptionParameters(workflow);
+    expect(fixes).toBe(0);
+    expect(workflow.nodes[0].parameters.operation).toBe('generate');
+  });
+});
+
+// ============================================================================
+// detectUnknownParameters
+// ============================================================================
+
+describe('detectUnknownParameters', () => {
+  test('detects unknown params on OpenAI node (model → modelId)', () => {
+    const workflow = {
+      name: 'OpenAI Bad Params',
+      nodes: [
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: {
+            resource: 'text',
+            operation: 'response',
+            model: 'gpt-4o-mini',
+            prompt: 'Hello world',
+          },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(1);
+    expect(detections[0].nodeName).toBe('OpenAI');
+    expect(detections[0].unknownKeys).toContain('model');
+    expect(detections[0].unknownKeys).toContain('prompt');
+    // resource and operation are valid, should NOT be in unknownKeys
+    expect(detections[0].unknownKeys).not.toContain('resource');
+    expect(detections[0].unknownKeys).not.toContain('operation');
+  });
+
+  test('returns empty for node with valid params', () => {
+    const workflow = {
+      name: 'Gmail Valid',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'message', operation: 'send' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(0);
+  });
+
+  test('skips unknown node types', () => {
+    const workflow = {
+      name: 'Unknown Type',
+      nodes: [
+        {
+          name: 'Custom',
+          type: 'n8n-nodes-community.unknown',
+          typeVersion: 1,
+          position: [250, 300] as [number, number],
+          parameters: { anything: 'goes' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(0);
+  });
+
+  test('includes property definitions for LLM correction', () => {
+    const workflow = {
+      name: 'OpenAI Props',
+      nodes: [
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'text', operation: 'response', model: 'gpt-4o-mini' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(1);
+    // Should include simplified property definitions
+    expect(detections[0].propertyDefs.length).toBeGreaterThan(0);
+    // modelId should be in the visible definitions for resource: "text"
+    const hasModelId = detections[0].propertyDefs.some((p) => p.name === 'modelId');
+    expect(hasModelId).toBe(true);
+    // model should NOT be visible for resource: "text"
+    const hasModel = detections[0].propertyDefs.some((p) => p.name === 'model');
+    expect(hasModel).toBe(false);
+  });
+
+  test('handles multiple nodes, only flags ones with unknown params', () => {
+    const workflow = {
+      name: 'Mixed',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2,
+          position: [250, 300] as [number, number],
+          parameters: { resource: 'message', operation: 'send' },
+        },
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 2.1,
+          position: [500, 300] as [number, number],
+          parameters: { resource: 'text', model: 'gpt-4o' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(1);
+    expect(detections[0].nodeName).toBe('OpenAI');
+  });
+});
+
+// ============================================================================
+// ensureExpressionPrefix
+// ============================================================================
+
+describe('ensureExpressionPrefix', () => {
+  test('adds = prefix to {{ }} values', () => {
+    const workflow = {
+      name: 'Test',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2,
+          position: [0, 0] as [number, number],
+          parameters: {
+            subject: '{{ $json.Subject }}',
+            to: 'fixed@example.com',
+          },
+        },
+      ],
+      connections: {},
+    };
+    const count = ensureExpressionPrefix(workflow);
+    expect(count).toBe(1);
+    expect(workflow.nodes[0].parameters.subject).toBe('={{ $json.Subject }}');
+    expect(workflow.nodes[0].parameters.to).toBe('fixed@example.com');
+  });
+
+  test('does not double-prefix values already starting with =', () => {
+    const workflow = {
+      name: 'Test',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2,
+          position: [0, 0] as [number, number],
+          parameters: {
+            subject: '={{ $json.Subject }}',
+          },
+        },
+      ],
+      connections: {},
+    };
+    const count = ensureExpressionPrefix(workflow);
+    expect(count).toBe(0);
+    expect(workflow.nodes[0].parameters.subject).toBe('={{ $json.Subject }}');
+  });
+
+  test('handles nested objects (fixedCollection values)', () => {
+    const workflow = {
+      name: 'Test',
+      nodes: [
+        {
+          name: 'OpenAI',
+          type: '@n8n/n8n-nodes-langchain.openAi',
+          typeVersion: 2.1,
+          position: [0, 0] as [number, number],
+          parameters: {
+            responses: {
+              values: [{ content: '{{ $json.Subject }}' }],
+            },
+          },
+        },
+      ],
+      connections: {},
+    };
+    const count = ensureExpressionPrefix(workflow);
+    expect(count).toBe(1);
+    expect((workflow.nodes[0].parameters.responses as any).values[0].content).toBe(
+      '={{ $json.Subject }}'
+    );
+  });
+
+  test('handles multiple nodes and multiple values', () => {
+    const workflow = {
+      name: 'Test',
+      nodes: [
+        {
+          name: 'Node1',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2,
+          position: [0, 0] as [number, number],
+          parameters: {
+            subject: '{{ $json.Subject }}',
+            body: '{{ $json.body }}',
+          },
+        },
+        {
+          name: 'Node2',
+          type: 'n8n-nodes-base.slack',
+          typeVersion: 2,
+          position: [200, 0] as [number, number],
+          parameters: {
+            text: '{{ $json.output[0].content[0].text }}',
+            channel: '#general',
+          },
+        },
+      ],
+      connections: {},
+    };
+    const count = ensureExpressionPrefix(workflow);
+    expect(count).toBe(3);
+  });
+
+  test('skips nodes without parameters', () => {
+    const workflow = {
+      name: 'Test',
+      nodes: [
+        {
+          name: 'Start',
+          type: 'n8n-nodes-base.start',
+          typeVersion: 1,
+          position: [0, 0] as [number, number],
+          parameters: {},
+        },
+      ],
+      connections: {},
+    };
+    const count = ensureExpressionPrefix(workflow);
+    expect(count).toBe(0);
+  });
+
+  test('handles string values in arrays', () => {
+    const workflow = {
+      name: 'Test',
+      nodes: [
+        {
+          name: 'Node',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 1,
+          position: [0, 0] as [number, number],
+          parameters: {
+            items: ['{{ $json.a }}', 'static', '{{ $json.b }}'],
+          },
+        },
+      ],
+      connections: {},
+    };
+    const count = ensureExpressionPrefix(workflow);
+    expect(count).toBe(2);
+    expect((workflow.nodes[0].parameters.items as string[])[0]).toBe('={{ $json.a }}');
+    expect((workflow.nodes[0].parameters.items as string[])[1]).toBe('static');
+    expect((workflow.nodes[0].parameters.items as string[])[2]).toBe('={{ $json.b }}');
   });
 });

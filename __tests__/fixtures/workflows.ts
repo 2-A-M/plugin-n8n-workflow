@@ -62,6 +62,28 @@ export function createSlackNode(overrides?: Partial<N8nNode>): N8nNode {
   };
 }
 
+export function createGmailTriggerNode(overrides?: Partial<N8nNode>): N8nNode {
+  return {
+    name: 'Gmail Trigger',
+    type: 'n8n-nodes-base.gmailTrigger',
+    typeVersion: 1,
+    position: [250, 300],
+    parameters: {},
+    ...overrides,
+  };
+}
+
+export function createGithubTriggerNode(overrides?: Partial<N8nNode>): N8nNode {
+  return {
+    name: 'GitHub Trigger',
+    type: 'n8n-nodes-base.githubTrigger',
+    typeVersion: 1,
+    position: [250, 300],
+    parameters: {},
+    ...overrides,
+  };
+}
+
 // ============================================================================
 // WORKFLOWS
 // ============================================================================

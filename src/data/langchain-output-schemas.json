@@ -1,0 +1,123 @@
+{
+  "_comment": "Output schemas for @n8n/n8n-nodes-langchain nodes (no __schema__/ dirs in package). Derived from source code. Merged into schemaIndex.json by crawl-schemas.ts.",
+  "_langchainVersion": "0.6.x",
+  "nodes": {
+    "@n8n/n8n-nodes-langchain.openAi": {
+      "folder": "vendors/OpenAi",
+      "schemas": {
+        "text": {
+          "response": {
+            "type": "object",
+            "properties": {
+              "output": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string" },
+                    "content": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": { "type": "string" },
+                          "text": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "classify": {
+            "type": "object",
+            "properties": {
+              "flagged": { "type": "boolean" }
+            }
+          }
+        },
+        "image": {
+          "generate": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string" },
+              "revised_prompt": { "type": "string" }
+            }
+          },
+          "analyze": {
+            "type": "object",
+            "properties": {
+              "output": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string" },
+                    "content": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": { "type": "string" },
+                          "text": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "audio": {
+          "transcribe": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "language": { "type": "string" }
+            }
+          },
+          "translate": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" }
+            }
+          }
+        },
+        "file": {
+          "upload": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "object": { "type": "string" },
+              "bytes": { "type": "integer" },
+              "created_at": { "type": "integer" },
+              "filename": { "type": "string" },
+              "purpose": { "type": "string" }
+            }
+          },
+          "list": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "object": { "type": "string" },
+              "bytes": { "type": "integer" },
+              "created_at": { "type": "integer" },
+              "filename": { "type": "string" },
+              "purpose": { "type": "string" }
+            }
+          },
+          "deleteFile": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "object": { "type": "string" },
+              "deleted": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

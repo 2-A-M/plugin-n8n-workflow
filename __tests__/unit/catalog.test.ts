@@ -1,5 +1,10 @@
 import { describe, test, expect } from 'bun:test';
-import { searchNodes } from '../../src/utils/catalog';
+import {
+  searchNodes,
+  filterNodesByIntegrationSupport,
+  simplifyNodeForLLM,
+  getNodeDefinition,
+} from '../../src/utils/catalog';
 
 describe('searchNodes', () => {
   test('returns empty array for empty keywords', () => {
@@ -99,5 +104,154 @@ describe('searchNodes', () => {
     // Use a very generic keyword that matches many nodes
     const results = searchNodes(['data']);
     expect(results.length).toBeLessThanOrEqual(15);
+  });
+
+  test('finds OpenAI node by keyword', () => {
+    const results = searchNodes(['openai']);
+    expect(results.length).toBeGreaterThan(0);
+    const openAiNode = results.find((r) => r.node.name === '@n8n/n8n-nodes-langchain.openAi');
+    expect(openAiNode).toBeDefined();
+    expect(openAiNode!.node.credentials).toContainEqual(
+      expect.objectContaining({ name: 'openAiApi' })
+    );
+  });
+
+  test('finds OpenAI node with AI-related keywords', () => {
+    const results = searchNodes(['ai', 'openai']);
+    const openAiNode = results.find((r) => r.node.name === '@n8n/n8n-nodes-langchain.openAi');
+    expect(openAiNode).toBeDefined();
+  });
+});
+
+describe('filterNodesByIntegrationSupport', () => {
+  test('keeps nodes with supported credentials', () => {
+    const nodes = searchNodes(['gmail', 'openai'], 10);
+    const supported = new Set(['gmailOAuth2Api', 'openAiApi']);
+    const { remaining, removed } = filterNodesByIntegrationSupport(nodes, supported);
+
+    // OpenAI and Gmail nodes should remain
+    const openAi = remaining.find((r) => r.node.name === '@n8n/n8n-nodes-langchain.openAi');
+    expect(openAi).toBeDefined();
+    expect(removed.find((r) => r.node.name === '@n8n/n8n-nodes-langchain.openAi')).toBeUndefined();
+  });
+
+  test('removes nodes with unsupported credentials', () => {
+    const nodes = searchNodes(['openai'], 10);
+    const supported = new Set<string>(); // nothing supported
+    const { remaining, removed } = filterNodesByIntegrationSupport(nodes, supported);
+
+    const openAiRemoved = removed.find((r) => r.node.name === '@n8n/n8n-nodes-langchain.openAi');
+    expect(openAiRemoved).toBeDefined();
+    expect(
+      remaining.find((r) => r.node.name === '@n8n/n8n-nodes-langchain.openAi')
+    ).toBeUndefined();
+  });
+
+  test('keeps utility nodes without credentials', () => {
+    const nodes = searchNodes(['set', 'if'], 10);
+    const supported = new Set<string>();
+    const { remaining } = filterNodesByIntegrationSupport(nodes, supported);
+
+    // Utility nodes (no creds) should always remain
+    const utilityNodes = remaining.filter((r) => !r.node.credentials?.length);
+    expect(utilityNodes.length).toBeGreaterThan(0);
+  });
+
+  test('openAiApi credential is recognized by bridge map', () => {
+    // Simulates what checkCredentialTypes does in the cloud bridge
+    const API_KEY_CRED_TYPES = new Set(['openAiApi']);
+    const OAUTH_PREFIXES = [
+      'gmail',
+      'google',
+      'gSuite',
+      'youTube',
+      'slack',
+      'github',
+      'linear',
+      'notion',
+      'twitter',
+    ];
+
+    const isSupported = (credType: string) =>
+      API_KEY_CRED_TYPES.has(credType) || OAUTH_PREFIXES.some((p) => credType.startsWith(p));
+
+    // These should all be supported
+    expect(isSupported('openAiApi')).toBe(true);
+    expect(isSupported('gmailOAuth2Api')).toBe(true);
+    expect(isSupported('slackOAuth2Api')).toBe(true);
+
+    // This should NOT be supported
+    expect(isSupported('hubspotOAuth2Api')).toBe(false);
+  });
+});
+
+describe('simplifyNodeForLLM', () => {
+  test('strips notice and hidden properties', () => {
+    const openai = getNodeDefinition('@n8n/n8n-nodes-langchain.openAi');
+    expect(openai).toBeDefined();
+
+    const hasNotice = openai!.properties.some((p) => p.type === 'notice');
+    const hasHidden = openai!.properties.some((p) => p.type === 'hidden');
+    expect(hasNotice || hasHidden).toBe(true);
+
+    const simplified = simplifyNodeForLLM(openai!);
+    expect(simplified.properties.every((p) => p.type !== 'notice')).toBe(true);
+    expect(simplified.properties.every((p) => p.type !== 'hidden')).toBe(true);
+  });
+
+  test('removes routing and displayOptions from properties', () => {
+    const openai = getNodeDefinition('@n8n/n8n-nodes-langchain.openAi');
+    const simplified = simplifyNodeForLLM(openai!);
+
+    for (const prop of simplified.properties) {
+      const raw = prop as unknown as Record<string, unknown>;
+      expect(raw.routing).toBeUndefined();
+      expect(raw.displayOptions).toBeUndefined();
+      expect(raw.typeOptions).toBeUndefined();
+      expect(raw.modes).toBeUndefined();
+    }
+  });
+
+  test('converts resourceLocator to string type', () => {
+    const openai = getNodeDefinition('@n8n/n8n-nodes-langchain.openAi');
+    const hasResourceLocator = openai!.properties.some((p) => p.type === 'resourceLocator');
+    expect(hasResourceLocator).toBe(true);
+
+    const simplified = simplifyNodeForLLM(openai!);
+    expect(simplified.properties.every((p) => p.type !== 'resourceLocator')).toBe(true);
+  });
+
+  test('reduces JSON size significantly for complex nodes', () => {
+    const openai = getNodeDefinition('@n8n/n8n-nodes-langchain.openAi');
+    const simplified = simplifyNodeForLLM(openai!);
+
+    const originalSize = JSON.stringify(openai!.properties).length;
+    const simplifiedSize = JSON.stringify(simplified.properties).length;
+    expect(simplifiedSize).toBeLessThan(originalSize * 0.7);
+  });
+
+  test('preserves required fields and name/type/default', () => {
+    const openai = getNodeDefinition('@n8n/n8n-nodes-langchain.openAi');
+    const simplified = simplifyNodeForLLM(openai!);
+
+    for (const prop of simplified.properties) {
+      expect(prop.name).toBeDefined();
+      expect(prop.displayName).toBeDefined();
+      expect(prop.type).toBeDefined();
+      expect('default' in prop).toBe(true);
+    }
+
+    const resource = simplified.properties.find((p) => p.name === 'resource');
+    expect(resource).toBeDefined();
+    expect(resource!.options).toBeDefined();
+  });
+
+  test('works on simple nodes without crashing', () => {
+    const setNode = getNodeDefinition('n8n-nodes-base.set');
+    expect(setNode).toBeDefined();
+
+    const simplified = simplifyNodeForLLM(setNode!);
+    expect(simplified.properties.length).toBeGreaterThan(0);
+    expect(simplified.name).toBe(setNode!.name);
   });
 });

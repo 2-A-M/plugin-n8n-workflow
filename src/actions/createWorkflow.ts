@@ -85,6 +85,32 @@ function buildPreviewData(workflow: N8nWorkflow): Record<string, unknown> {
   };
 }
 
+function diffNodeParams(
+  before: N8nWorkflow,
+  after: N8nWorkflow
+): Record<string, Record<string, unknown>> {
+  const changes: Record<string, Record<string, unknown>> = {};
+
+  for (const afterNode of after.nodes) {
+    const beforeNode = before.nodes.find((n) => n.name === afterNode.name);
+    const afterParams = (afterNode.parameters || {}) as Record<string, unknown>;
+    const beforeParams = (beforeNode?.parameters || {}) as Record<string, unknown>;
+
+    const nodeChanges: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(afterParams)) {
+      if (JSON.stringify(value) !== JSON.stringify(beforeParams[key])) {
+        nodeChanges[key] = value;
+      }
+    }
+
+    if (Object.keys(nodeChanges).length > 0) {
+      changes[afterNode.name] = nodeChanges;
+    }
+  }
+
+  return changes;
+}
+
 const examples: ActionExample[][] = [
   [
     {
@@ -216,7 +242,9 @@ const examples: ActionExample[][] = [
   ],
 ];
 
-export const createWorkflowAction: Action = {
+export const createWorkflowAction: Action & {
+  parameters?: Record<string, { type: string; description: string; required?: boolean }>;
+} = {
   name: 'CREATE_N8N_WORKFLOW',
   similes: [
     'CREATE_WORKFLOW',
@@ -237,6 +265,8 @@ export const createWorkflowAction: Action = {
     'IMPORTANT: When a workflow draft is pending, this action MUST be used for ANY user response ' +
     'about the draft — including "yes", "ok", "deploy it", "cancel", or modification requests. ' +
     'Never reply with text only when a draft is pending.',
+
+  parameters: {},
 
   validate: async (runtime: IAgentRuntime): Promise<boolean> => {
     return !!runtime.getService(N8N_WORKFLOW_SERVICE_TYPE);
@@ -281,6 +311,16 @@ export const createWorkflowAction: Action = {
       }
 
       if (existingDraft) {
+        // Guard: if the draft was created by this same message, return silently.
+        // No callback = no new output for the multi-step agent to process = it stops looping.
+        if (existingDraft.originMessageId && existingDraft.originMessageId === message.id) {
+          logger.info(
+            { src: 'plugin:n8n-workflow:action:create' },
+            'Same message as draft origin — skipping'
+          );
+          return { success: true, data: { awaitingUserInput: true } };
+        }
+
         const intentResult = await classifyDraftIntent(runtime, userText, existingDraft);
         logger.info(
           { src: 'plugin:n8n-workflow:action:create' },
@@ -362,6 +402,7 @@ export const createWorkflowAction: Action = {
               prompt: existingDraft.prompt,
               userId,
               createdAt: Date.now(),
+              originMessageId: message.id,
             };
             await runtime.setCache(cacheKey, modifiedDraft);
 
@@ -375,11 +416,13 @@ export const createWorkflowAction: Action = {
               return { success: true, data: { awaitingUserInput: true } };
             }
 
-            const text = await formatActionResponse(
-              runtime,
-              'PREVIEW',
-              buildPreviewData(modifiedWorkflow)
-            );
+            const previewData = buildPreviewData(modifiedWorkflow);
+            const changes = diffNodeParams(existingDraft.workflow, modifiedWorkflow);
+            if (Object.keys(changes).length > 0) {
+              previewData.changes = changes;
+            }
+
+            const text = await formatActionResponse(runtime, 'PREVIEW', previewData);
             if (callback) {
               await callback({ text, success: true });
             }
@@ -404,6 +447,7 @@ export const createWorkflowAction: Action = {
                 generationContext,
                 userId,
                 cacheKey,
+                message.id ?? '',
                 callback
               );
             } catch (genError) {
@@ -455,6 +499,7 @@ export const createWorkflowAction: Action = {
         generationContext,
         userId,
         cacheKey,
+        message.id ?? '',
         callback
       );
     } catch (error) {
@@ -492,6 +537,7 @@ async function generateAndPreview(
   prompt: string,
   userId: string,
   cacheKey: string,
+  messageId: string,
   callback?: HandlerCallback
 ): Promise<ActionResult> {
   logger.info(
@@ -506,6 +552,7 @@ async function generateAndPreview(
     prompt,
     userId,
     createdAt: Date.now(),
+    originMessageId: messageId,
   };
   await runtime.setCache(cacheKey, draft);
 

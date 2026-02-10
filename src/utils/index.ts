@@ -11,7 +11,21 @@ export { resolveCredentials } from './credentialResolver';
 export { getUserTagName } from './context';
 
 // Workflow generation pipeline
-export { extractKeywords, matchWorkflow, generateWorkflow } from './generation';
+export {
+  extractKeywords,
+  matchWorkflow,
+  generateWorkflow,
+  correctFieldReferences,
+} from './generation';
 
 // Workflow validation & positioning
-export { validateWorkflow, positionNodes } from './workflow';
+export { validateWorkflow, positionNodes, validateOutputReferences } from './workflow';
+
+// Output schema utilities
+export {
+  hasOutputSchema,
+  loadOutputSchema,
+  parseExpressions,
+  fieldExistsInSchema,
+  formatSchemaForPrompt,
+} from './outputSchema';

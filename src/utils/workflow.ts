@@ -1,5 +1,24 @@
-import type { N8nWorkflow, NodeProperty, WorkflowValidationResult } from '../types/index';
-import { getNodeDefinition } from './catalog';
+import { logger } from '@elizaos/core';
+import type {
+  N8nWorkflow,
+  NodeProperty,
+  WorkflowValidationResult,
+  OutputRefValidation,
+  SchemaContent,
+} from '../types/index';
+import { getNodeDefinition, simplifyNodeForLLM } from './catalog';
+import {
+  loadOutputSchema,
+  loadTriggerOutputSchema,
+  parseExpressions,
+  fieldExistsInSchema,
+  getAllFieldPathsTyped,
+} from './outputSchema';
+
+function isTriggerNode(type: string): boolean {
+  const t = type.toLowerCase();
+  return t.includes('trigger') || t.includes('webhook');
+}
 
 export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResult {
   const errors: string[] = [];
@@ -92,10 +111,7 @@ export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResul
 
   // 5. Check for at least one trigger node
   const hasTrigger = workflow.nodes.some(
-    (node) =>
-      node.type.toLowerCase().includes('trigger') ||
-      node.type.toLowerCase().includes('webhook') ||
-      node.name.toLowerCase().includes('start')
+    (node) => isTriggerNode(node.type) || node.name.toLowerCase().includes('start')
   );
 
   if (!hasTrigger) {
@@ -115,12 +131,11 @@ export function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResul
   }
 
   for (const node of workflow.nodes) {
-    const isTrigger =
-      node.type.toLowerCase().includes('trigger') ||
-      node.type.toLowerCase().includes('webhook') ||
-      node.name.toLowerCase().includes('start');
-
-    if (!isTrigger && !nodesWithIncoming.has(node.name)) {
+    if (
+      !isTriggerNode(node.type) &&
+      !node.name.toLowerCase().includes('start') &&
+      !nodesWithIncoming.has(node.name)
+    ) {
       warnings.push(`Node "${node.name}" has no incoming connections - it will never execute`);
     }
   }
@@ -232,14 +247,14 @@ export function validateNodeInputs(workflow: N8nWorkflow): string[] {
       continue;
     }
 
-    const isTrigger =
-      node.type.toLowerCase().includes('trigger') ||
-      node.type.toLowerCase().includes('webhook') ||
-      nodeDef.group.includes('trigger');
-
-    if (isTrigger) {
+    if (isTriggerNode(node.type) || nodeDef.group.includes('trigger')) {
       continue;
-    } // Triggers don't need incoming connections
+    }
+
+    // Dynamic inputs (n8n expression string) can't be validated statically
+    if (!Array.isArray(nodeDef.inputs)) {
+      continue;
+    }
 
     const expectedInputs = nodeDef.inputs.filter((i) => i === 'main').length;
     const actualInputs = incomingCount.get(node.name) || 0;
@@ -281,6 +296,212 @@ export function positionNodes(workflow: N8nWorkflow): N8nWorkflow {
 
   positioned.nodes = positionedNodes;
   return positioned;
+}
+
+/** Ensure trigger nodes use simplified output when available. */
+export function normalizeTriggerSimpleParam(workflow: N8nWorkflow): void {
+  for (const node of workflow.nodes) {
+    if (!isTriggerNode(node.type)) {
+      continue;
+    }
+
+    const def = getNodeDefinition(node.type);
+    const hasSimple = def?.properties?.some((p: { name: string }) => p.name === 'simple');
+    if (hasSimple) {
+      node.parameters = { ...node.parameters, simple: true };
+    }
+  }
+}
+
+/**
+ * Validates that $json expressions reference fields that exist in upstream node output schemas.
+ * Returns a list of invalid references that need correction.
+ */
+export function validateOutputReferences(workflow: N8nWorkflow): OutputRefValidation[] {
+  const invalidRefs: OutputRefValidation[] = [];
+  const upstreamMap = buildUpstreamMap(workflow);
+  const nodeMap = new Map(workflow.nodes.map((n) => [n.name, n]));
+
+  const schemaCache = new Map<
+    string,
+    { schema: SchemaContent; fields: string[]; node: N8nWorkflow['nodes'][0] } | null
+  >();
+
+  function getSourceSchema(sourceName: string) {
+    if (schemaCache.has(sourceName)) {
+      return schemaCache.get(sourceName)!;
+    }
+    const sourceNode = nodeMap.get(sourceName);
+    if (!sourceNode) {
+      schemaCache.set(sourceName, null);
+      return null;
+    }
+    const resource = (sourceNode.parameters?.resource as string) || '';
+    const operation = (sourceNode.parameters?.operation as string) || '';
+    const schemaResult = isTriggerNode(sourceNode.type)
+      ? loadTriggerOutputSchema(sourceNode.type, sourceNode.parameters as Record<string, unknown>)
+      : loadOutputSchema(sourceNode.type, resource, operation);
+    if (!schemaResult) {
+      schemaCache.set(sourceName, null);
+      return null;
+    }
+    const entry = { schema: schemaResult.schema, fields: schemaResult.fields, node: sourceNode };
+    schemaCache.set(sourceName, entry);
+    return entry;
+  }
+
+  for (const node of workflow.nodes) {
+    if (!node.parameters) {
+      continue;
+    }
+
+    const expressions = parseExpressions(node.parameters);
+    if (expressions.length === 0) {
+      continue;
+    }
+
+    const upstreamNames = upstreamMap.get(node.name) || [];
+    if (upstreamNames.length === 0) {
+      continue;
+    }
+
+    const defaultSourceName = upstreamNames[0];
+
+    for (const expr of expressions) {
+      const sourceName = expr.sourceNodeName || defaultSourceName;
+      const cached = getSourceSchema(sourceName);
+      if (!cached) {
+        continue;
+      }
+
+      const exists = fieldExistsInSchema(expr.path, cached.schema);
+      if (!exists) {
+        const resource = (cached.node.parameters?.resource as string) || '';
+        const operation = (cached.node.parameters?.operation as string) || '';
+        invalidRefs.push({
+          nodeName: node.name,
+          expression: expr.fullExpression,
+          field: expr.field,
+          sourceNodeName: sourceName,
+          sourceNodeType: cached.node.type,
+          resource,
+          operation,
+          availableFields: getAllFieldPathsTyped(cached.schema).map((f) => `${f.path} (${f.type})`),
+        });
+      }
+    }
+  }
+
+  return invalidRefs;
+}
+
+/**
+ * Correct invalid option parameter values and typeVersion against catalog definitions.
+ * Top-level options (resource) are fixed first so displayOptions cascading works for dependent ones (operation).
+ */
+export function correctOptionParameters(workflow: N8nWorkflow): number {
+  let corrections = 0;
+
+  for (const node of workflow.nodes) {
+    const nodeDef = getNodeDefinition(node.type);
+    if (!nodeDef) {
+      continue;
+    }
+
+    if (node.type !== nodeDef.name) {
+      logger.warn(
+        { src: 'plugin:n8n-workflow:correctOptions' },
+        `Node "${node.name}": type "${node.type}" → "${nodeDef.name}"`
+      );
+      node.type = nodeDef.name;
+      corrections++;
+    }
+
+    const validVersions = Array.isArray(nodeDef.version) ? nodeDef.version : [nodeDef.version];
+    if (node.typeVersion && !validVersions.includes(node.typeVersion)) {
+      const maxVersion = Math.max(...validVersions);
+      logger.warn(
+        { src: 'plugin:n8n-workflow:correctOptions' },
+        `Node "${node.name}": typeVersion ${node.typeVersion} → ${maxVersion}`
+      );
+      node.typeVersion = maxVersion;
+      corrections++;
+    }
+
+    const topLevel: NodeProperty[] = [];
+    const dependent: NodeProperty[] = [];
+    for (const prop of nodeDef.properties) {
+      if (prop.type !== 'options' || !prop.options?.length) {
+        continue;
+      }
+      if (prop.displayOptions) {
+        dependent.push(prop);
+      } else {
+        topLevel.push(prop);
+      }
+    }
+
+    for (const prop of topLevel) {
+      corrections += fixOptionValue(node, prop);
+    }
+
+    for (const prop of dependent) {
+      if (!isPropertyVisible(prop, node.parameters)) {
+        continue;
+      }
+      corrections += fixOptionValue(node, prop);
+    }
+  }
+
+  return corrections;
+}
+
+function fixOptionValue(node: N8nWorkflow['nodes'][0], prop: NodeProperty): number {
+  const currentValue = node.parameters[prop.name];
+  if (currentValue === undefined) {
+    return 0;
+  }
+
+  const allowedValues = prop.options!.map((o) => o.value);
+  if (allowedValues.includes(currentValue as string | number | boolean)) {
+    return 0;
+  }
+
+  const corrected =
+    prop.default !== undefined && allowedValues.includes(prop.default as string | number | boolean)
+      ? prop.default
+      : allowedValues[0];
+
+  logger.warn(
+    { src: 'plugin:n8n-workflow:correctOptions' },
+    `Node "${node.name}": ${prop.name} "${currentValue}" → "${corrected}"`
+  );
+  node.parameters[prop.name] = corrected;
+  return 1;
+}
+
+function buildUpstreamMap(workflow: N8nWorkflow): Map<string, string[]> {
+  const upstream = new Map<string, string[]>();
+
+  for (const node of workflow.nodes) {
+    upstream.set(node.name, []);
+  }
+
+  for (const [sourceName, outputs] of Object.entries(workflow.connections)) {
+    for (const connectionGroups of Object.values(outputs)) {
+      for (const connections of connectionGroups) {
+        for (const conn of connections) {
+          const existing = upstream.get(conn.node) || [];
+          if (!existing.includes(sourceName)) {
+            existing.push(sourceName);
+            upstream.set(conn.node, existing);
+          }
+        }
+      }
+    }
+  }
+
+  return upstream;
 }
 
 function buildNodeGraph(workflow: N8nWorkflow): Map<string, string[]> {
@@ -397,4 +618,101 @@ function positionByLevels(
   }
 
   return positioned;
+}
+
+/**
+ * Detect parameters not matching any VISIBLE catalog property.
+ * e.g. `model` is only valid for `resource: "image"`, not `resource: "text"` (where `modelId` is correct).
+ * Runs AFTER correctOptionParameters so resource/operation are already valid.
+ */
+export interface UnknownParamDetection {
+  nodeName: string;
+  nodeType: string;
+  currentParams: Record<string, unknown>;
+  unknownKeys: string[];
+  /** Simplified property definitions for this node (used by the LLM to fix params). */
+  propertyDefs: NodeProperty[];
+}
+
+export function detectUnknownParameters(workflow: N8nWorkflow): UnknownParamDetection[] {
+  const detections: UnknownParamDetection[] = [];
+
+  for (const node of workflow.nodes) {
+    const nodeDef = getNodeDefinition(node.type);
+    if (!nodeDef || !node.parameters) {
+      continue;
+    }
+
+    // Compute visible property names using full definition (with displayOptions)
+    const visibleNames = new Set<string>();
+    for (const prop of nodeDef.properties) {
+      if (isPropertyVisible(prop, node.parameters)) {
+        visibleNames.add(prop.name);
+      }
+    }
+
+    const unknownKeys: string[] = [];
+    for (const key of Object.keys(node.parameters)) {
+      if (!visibleNames.has(key)) {
+        unknownKeys.push(key);
+      }
+    }
+
+    if (unknownKeys.length === 0) {
+      continue;
+    }
+
+    // Provide simplified visible properties for the LLM correction prompt
+    const simplified = simplifyNodeForLLM(nodeDef);
+    const visibleSimplified = simplified.properties.filter((p) => visibleNames.has(p.name));
+
+    detections.push({
+      nodeName: node.name,
+      nodeType: node.type,
+      currentParams: node.parameters,
+      unknownKeys,
+      propertyDefs: visibleSimplified,
+    });
+  }
+
+  return detections;
+}
+
+/**
+ * Prefix all string parameter values containing {{ }} with = so n8n evaluates them as expressions.
+ * Without =, n8n treats {{ }} as literal text.
+ * Returns the number of values prefixed.
+ */
+export function ensureExpressionPrefix(workflow: N8nWorkflow): number {
+  let count = 0;
+  for (const node of workflow.nodes) {
+    if (!node.parameters) {
+      continue;
+    }
+    count += prefixExpressions(node.parameters);
+  }
+  return count;
+}
+
+function prefixExpressions(obj: Record<string, unknown>): number {
+  let count = 0;
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.includes('{{') && !value.startsWith('=')) {
+      obj[key] = `=${value}`;
+      count++;
+    } else if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        if (typeof value[i] === 'string' && value[i].includes('{{') && !value[i].startsWith('=')) {
+          value[i] = `=${value[i]}`;
+          count++;
+        } else if (typeof value[i] === 'object' && value[i] !== null) {
+          count += prefixExpressions(value[i] as Record<string, unknown>);
+        }
+      }
+    } else if (typeof value === 'object' && value !== null) {
+      count += prefixExpressions(value as Record<string, unknown>);
+    }
+  }
+  return count;
 }

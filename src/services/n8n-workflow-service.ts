@@ -8,12 +8,19 @@ import {
   modifyWorkflow,
   collectExistingNodeDefinitions,
   assessFeasibility,
+  correctFieldReferences,
+  correctParameterNames,
 } from '../utils/generation';
 import {
   positionNodes,
   validateWorkflow,
   validateNodeParameters,
   validateNodeInputs,
+  validateOutputReferences,
+  normalizeTriggerSimpleParam,
+  correctOptionParameters,
+  detectUnknownParameters,
+  ensureExpressionPrefix,
 } from '../utils/workflow';
 import { resolveCredentials } from '../utils/credentialResolver';
 import type {
@@ -228,7 +235,7 @@ export class N8nWorkflowService extends Service {
     }
     // ── End integration check ──
 
-    const workflow = await generateWorkflow(
+    let workflow = await generateWorkflow(
       this.runtime,
       prompt,
       relevantNodes.map((r) => r.node)
@@ -237,6 +244,42 @@ export class N8nWorkflowService extends Service {
       { src: 'plugin:n8n-workflow:service:main' },
       `Generated workflow with ${workflow.nodes?.length || 0} nodes`
     );
+
+    normalizeTriggerSimpleParam(workflow);
+
+    const optionFixes = correctOptionParameters(workflow);
+    if (optionFixes > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Corrected ${optionFixes} invalid option parameter(s)`
+      );
+    }
+
+    const unknownParams = detectUnknownParameters(workflow);
+    if (unknownParams.length > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Found ${unknownParams.length} node(s) with unknown parameters, auto-correcting...`
+      );
+      workflow = await correctParameterNames(this.runtime, workflow, unknownParams);
+    }
+
+    const invalidRefs = validateOutputReferences(workflow);
+    if (invalidRefs.length > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Found ${invalidRefs.length} invalid field reference(s), auto-correcting...`
+      );
+      workflow = await correctFieldReferences(this.runtime, workflow, invalidRefs);
+    }
+
+    const exprPrefixed = ensureExpressionPrefix(workflow);
+    if (exprPrefixed > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Prefixed ${exprPrefixed} expression value(s) with "="`
+      );
+    }
 
     const validationResult = validateWorkflow(workflow);
     if (!validationResult.valid) {
@@ -289,12 +332,48 @@ export class N8nWorkflowService extends Service {
       `Modify context: ${existingDefs.length} existing + ${newDefs.length} searched → ${combinedDefs.length} unique node defs`
     );
 
-    const workflow = await modifyWorkflow(
+    let workflow = await modifyWorkflow(
       this.runtime,
       existingWorkflow,
       modificationRequest,
       combinedDefs
     );
+
+    normalizeTriggerSimpleParam(workflow);
+
+    const optionFixes = correctOptionParameters(workflow);
+    if (optionFixes > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Corrected ${optionFixes} invalid option parameter(s) in modified workflow`
+      );
+    }
+
+    const unknownParams = detectUnknownParameters(workflow);
+    if (unknownParams.length > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Found ${unknownParams.length} node(s) with unknown parameters in modified workflow, auto-correcting...`
+      );
+      workflow = await correctParameterNames(this.runtime, workflow, unknownParams);
+    }
+
+    const invalidRefs = validateOutputReferences(workflow);
+    if (invalidRefs.length > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Found ${invalidRefs.length} invalid field reference(s) in modified workflow, auto-correcting...`
+      );
+      workflow = await correctFieldReferences(this.runtime, workflow, invalidRefs);
+    }
+
+    const exprPrefixed = ensureExpressionPrefix(workflow);
+    if (exprPrefixed > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Prefixed ${exprPrefixed} expression value(s) with "=" in modified workflow`
+      );
+    }
 
     const validationResult = validateWorkflow(workflow);
     if (!validationResult.valid) {
@@ -325,13 +404,17 @@ export class N8nWorkflowService extends Service {
     const rawProvider = this.runtime.getService(N8N_CREDENTIAL_PROVIDER_TYPE);
     const credProvider = isCredentialProvider(rawProvider) ? rawProvider : null;
 
+    // Compute tag name once - reused for credentials and workflow tagging
+    const tagName = await getUserTagName(this.runtime, userId);
+
     const credentialResult = await resolveCredentials(
       workflow,
       userId,
       config,
       credStore ?? null,
       credProvider,
-      client
+      client,
+      tagName
     );
 
     // Block deploy if any credential is unresolved
@@ -345,16 +428,39 @@ export class N8nWorkflowService extends Service {
       };
     }
 
-    const createdWorkflow = await client.createWorkflow(credentialResult.workflow);
+    // Determine if this is an update (existing workflow) or create (new workflow).
+    // If update fails (workflow deleted on n8n), fallback to create.
+    let deployedWorkflow;
+    let wasUpdate = false;
+    if (workflow.id) {
+      try {
+        deployedWorkflow = await client.updateWorkflow(workflow.id, credentialResult.workflow);
+        wasUpdate = true;
+      } catch {
+        logger.warn(
+          { src: 'plugin:n8n-workflow:service:main' },
+          `Update failed for workflow ${workflow.id}, creating new workflow instead`
+        );
+        const { id: _, ...rest } = credentialResult.workflow as unknown as Record<string, unknown>;
+        deployedWorkflow = await client.createWorkflow(rest as unknown as N8nWorkflow);
+      }
+    } else {
+      deployedWorkflow = await client.createWorkflow(credentialResult.workflow);
+    }
 
-    // Activate (publish) the workflow immediately after creation
+    logger.info(
+      { src: 'plugin:n8n-workflow:service:main' },
+      `Workflow ${wasUpdate ? 'updated' : 'created'}: ${deployedWorkflow.id}`
+    );
+
+    // Activate (publish) the workflow immediately after creation/update
     let active = false;
     try {
-      await client.activateWorkflow(createdWorkflow.id);
+      await client.activateWorkflow(deployedWorkflow.id);
       active = true;
       logger.info(
         { src: 'plugin:n8n-workflow:service:main' },
-        `Workflow ${createdWorkflow.id} activated`
+        `Workflow ${deployedWorkflow.id} activated`
       );
     } catch (error) {
       logger.warn(
@@ -363,14 +469,14 @@ export class N8nWorkflowService extends Service {
       );
     }
 
-    if (userId) {
+    // Only tag new workflows (existing ones should already have tags)
+    if (userId && !wasUpdate) {
       try {
-        const tagName = await getUserTagName(this.runtime, userId);
         const userTag = await client.getOrCreateTag(tagName);
-        await client.updateWorkflowTags(createdWorkflow.id, [userTag.id]);
+        await client.updateWorkflowTags(deployedWorkflow.id, [userTag.id]);
         logger.debug(
           { src: 'plugin:n8n-workflow:service:main' },
-          `Tagged workflow ${createdWorkflow.id} with "${tagName}"`
+          `Tagged workflow ${deployedWorkflow.id} with "${tagName}"`
         );
       } catch (error) {
         logger.warn(
@@ -380,16 +486,11 @@ export class N8nWorkflowService extends Service {
       }
     }
 
-    logger.info(
-      { src: 'plugin:n8n-workflow:service:main' },
-      `Workflow created successfully: ${createdWorkflow.id}`
-    );
-
     return {
-      id: createdWorkflow.id,
-      name: createdWorkflow.name,
+      id: deployedWorkflow.id,
+      name: deployedWorkflow.name,
       active,
-      nodeCount: createdWorkflow.nodes?.length || 0,
+      nodeCount: deployedWorkflow.nodes?.length || 0,
       missingCredentials: credentialResult.missingConnections,
     };
   }
@@ -431,6 +532,11 @@ export class N8nWorkflowService extends Service {
     const client = this.getClient();
     await client.deleteWorkflow(workflowId);
     logger.info({ src: 'plugin:n8n-workflow:service:main' }, `Workflow ${workflowId} deleted`);
+  }
+
+  async getWorkflow(workflowId: string): Promise<N8nWorkflowResponse> {
+    const client = this.getClient();
+    return client.getWorkflow(workflowId);
   }
 
   async getWorkflowExecutions(workflowId: string, limit?: number): Promise<N8nExecution[]> {

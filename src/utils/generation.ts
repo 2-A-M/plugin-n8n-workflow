@@ -8,6 +8,7 @@ import {
   NodeDefinition,
   NodeSearchResult,
   FeasibilityResult,
+  OutputRefValidation,
 } from '../types/index';
 import {
   KEYWORD_EXTRACTION_SYSTEM_PROMPT,
@@ -15,6 +16,10 @@ import {
   DRAFT_INTENT_SYSTEM_PROMPT,
   ACTION_RESPONSE_SYSTEM_PROMPT,
   FEASIBILITY_CHECK_PROMPT,
+  FIELD_CORRECTION_SYSTEM_PROMPT,
+  FIELD_CORRECTION_USER_PROMPT,
+  PARAM_CORRECTION_SYSTEM_PROMPT,
+  PARAM_CORRECTION_USER_PROMPT,
 } from '../prompts/index';
 import { WORKFLOW_MATCHING_SYSTEM_PROMPT } from '../prompts/workflowMatching';
 import {
@@ -23,7 +28,15 @@ import {
   draftIntentSchema,
   feasibilitySchema,
 } from '../schemas/index';
-import { getNodeDefinition } from './catalog';
+import { getNodeDefinition, simplifyNodeForLLM } from './catalog';
+import {
+  hasOutputSchema,
+  getAvailableResources,
+  getAvailableOperations,
+  loadOutputSchema,
+  formatSchemaForPrompt,
+} from './outputSchema';
+import type { UnknownParamDetection } from './workflow';
 
 export async function extractKeywords(
   runtime: IAgentRuntime,
@@ -184,19 +197,14 @@ ${userMessage}`,
     return { intent: 'show_preview', reason: 'Could not classify intent — re-showing preview' };
   }
 
-  logger.debug(
-    { src: 'plugin:n8n-workflow:generation:intent' },
-    `Draft intent: ${result.intent} — ${result.reason}`
-  );
-
   return result;
 }
 
 function parseWorkflowResponse(response: string): N8nWorkflow {
+  // Strip markdown code fences (handles ```json, ```, with any whitespace/newlines)
   const cleaned = response
-    .replace(/^\s*```json\s*/i, '')
-    .replace(/^\s*```\s*/i, '')
-    .replace(/```\s*$/, '')
+    .replace(/^[\s\S]*?```(?:json)?\s*\n?/i, '') // Remove everything up to and including opening fence
+    .replace(/\n?```[\s\S]*$/i, '') // Remove closing fence and everything after
     .trim();
 
   let workflow: N8nWorkflow;
@@ -219,18 +227,57 @@ function parseWorkflowResponse(response: string): N8nWorkflow {
   return workflow;
 }
 
+/**
+ * Build output schema context for relevant nodes so the LLM knows the exact
+ * output fields when writing expressions like {{ $json.field }}.
+ */
+function buildOutputSchemaContext(nodes: NodeDefinition[]): string {
+  const sections: string[] = [];
+
+  for (const node of nodes) {
+    if (!hasOutputSchema(node.name)) {
+      continue;
+    }
+
+    const resources = getAvailableResources(node.name);
+    for (const resource of resources) {
+      const operations = getAvailableOperations(node.name, resource);
+      for (const operation of operations) {
+        const result = loadOutputSchema(node.name, resource, operation);
+        if (!result) {
+          continue;
+        }
+        const formatted = formatSchemaForPrompt(result.schema);
+        sections.push(
+          `### ${node.name} (resource: "${resource}", operation: "${operation}")\n${formatted}`
+        );
+      }
+    }
+  }
+
+  if (sections.length === 0) {
+    return '';
+  }
+
+  return `\n## Node Output Schemas\n\nWhen referencing output data from a previous node using expressions like \`{{ $json.field }}\`, use ONLY the field paths listed below. Do NOT invent field names from your training data.\n\n${sections.join('\n\n')}`;
+}
+
 export async function generateWorkflow(
   runtime: IAgentRuntime,
   userPrompt: string,
   relevantNodes: NodeDefinition[]
 ): Promise<N8nWorkflow> {
+  const simplifiedNodes = relevantNodes.map(simplifyNodeForLLM);
+  const outputSchemaCtx = buildOutputSchemaContext(relevantNodes);
+
   const fullPrompt = `${WORKFLOW_GENERATION_SYSTEM_PROMPT}
 
 ## Relevant Nodes Available
 
-${JSON.stringify(relevantNodes, null, 2)}
+${JSON.stringify(simplifiedNodes, null, 2)}
 
 Use these node definitions to generate the workflow. Each node's "properties" field defines the available parameters.
+${outputSchemaCtx}
 
 ## User Request
 
@@ -261,13 +308,17 @@ export async function modifyWorkflow(
 ): Promise<N8nWorkflow> {
   const { _meta, ...workflowForLLM } = existingWorkflow;
 
+  const simplifiedNodes = relevantNodes.map(simplifyNodeForLLM);
+  const outputSchemaCtx = buildOutputSchemaContext(relevantNodes);
+
   const fullPrompt = `${WORKFLOW_GENERATION_SYSTEM_PROMPT}
 
 ## Relevant Nodes Available
 
-${JSON.stringify(relevantNodes, null, 2)}
+${JSON.stringify(simplifiedNodes, null, 2)}
 
 Use these node definitions to modify the workflow. Each node's "properties" field defines the available parameters.
+${outputSchemaCtx}
 
 ## Existing Workflow (modify this)
 
@@ -286,7 +337,14 @@ Keep all unchanged nodes and connections intact. Only add, remove, or change wha
     responseFormat: { type: 'json_object' },
   });
 
-  return parseWorkflowResponse(response);
+  const modified = parseWorkflowResponse(response);
+
+  // Preserve the original workflow ID for updates (LLM doesn't return it)
+  if (existingWorkflow.id) {
+    modified.id = existingWorkflow.id;
+  }
+
+  return modified;
 }
 
 export function collectExistingNodeDefinitions(workflow: N8nWorkflow): NodeDefinition[] {
@@ -381,4 +439,253 @@ export async function assessFeasibility(
       reason: `Feasibility check failed: ${errMsg}`,
     };
   }
+}
+
+/**
+ * Auto-corrects invalid field references in expressions using parallel LLM calls.
+ * Returns a new workflow with corrected expressions.
+ */
+export async function correctFieldReferences(
+  runtime: IAgentRuntime,
+  workflow: N8nWorkflow,
+  invalidRefs: OutputRefValidation[]
+): Promise<N8nWorkflow> {
+  if (invalidRefs.length === 0) {
+    return workflow;
+  }
+
+  logger.debug(
+    { src: 'plugin:n8n-workflow:generation:correction' },
+    `Correcting ${invalidRefs.length} invalid field reference(s)`
+  );
+
+  const corrections = await Promise.all(
+    invalidRefs.map(async (ref) => {
+      try {
+        const userPrompt = FIELD_CORRECTION_USER_PROMPT.replace(
+          '{expression}',
+          ref.expression
+        ).replace('{availableFields}', ref.availableFields.join('\n'));
+
+        const corrected = await runtime.useModel(ModelType.TEXT_SMALL, {
+          prompt: `${FIELD_CORRECTION_SYSTEM_PROMPT}\n\n${userPrompt}`,
+          temperature: 0,
+        });
+
+        const cleaned = (corrected as string).trim();
+        return { original: ref.expression, corrected: cleaned, nodeName: ref.nodeName };
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.warn(
+          { src: 'plugin:n8n-workflow:generation:correction', error: errMsg },
+          `Failed to correct expression "${ref.expression}": ${errMsg}`
+        );
+        return null;
+      }
+    })
+  );
+
+  const correctedWorkflow = JSON.parse(JSON.stringify(workflow)) as N8nWorkflow;
+
+  for (const correction of corrections) {
+    if (!correction) {
+      continue;
+    }
+
+    const node = correctedWorkflow.nodes.find((n) => n.name === correction.nodeName);
+    if (!node?.parameters) {
+      continue;
+    }
+
+    replaceInObject(node.parameters, correction.original, correction.corrected);
+
+    logger.debug(
+      { src: 'plugin:n8n-workflow:generation:correction' },
+      `Corrected "${correction.original}" → "${correction.corrected}" in node "${correction.nodeName}"`
+    );
+  }
+
+  return correctedWorkflow;
+}
+
+function replaceInObject(
+  obj: Record<string, unknown>,
+  original: string,
+  replacement: string
+): void {
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+
+    if (typeof value === 'string' && value.includes(original)) {
+      obj[key] = value.replaceAll(original, replacement);
+    } else if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        if (typeof value[i] === 'string' && value[i].includes(original)) {
+          value[i] = value[i].replaceAll(original, replacement);
+        } else if (typeof value[i] === 'object' && value[i] !== null) {
+          replaceInObject(value[i] as Record<string, unknown>, original, replacement);
+        }
+      }
+    } else if (typeof value === 'object' && value !== null) {
+      replaceInObject(value as Record<string, unknown>, original, replacement);
+    }
+  }
+}
+
+/**
+ * Try to deterministically rename an unknown key to a valid property name.
+ * Returns the matching property name or null if no confident match.
+ */
+function fuzzyMatchParam(
+  unknownKey: string,
+  validProps: { name: string; type: string }[]
+): string | null {
+  const lower = unknownKey.toLowerCase();
+
+  // Substring match: one valid prop contains the unknown key or vice-versa
+  // Guard: shorter string must be ≥ 60% of the longer to avoid false positives (e.g. "url" in "curl")
+  const substringMatches = validProps.filter((p) => {
+    const pLower = p.name.toLowerCase();
+    if (!(pLower.includes(lower) || lower.includes(pLower))) {
+      return false;
+    }
+    const ratio = Math.min(lower.length, pLower.length) / Math.max(lower.length, pLower.length);
+    return ratio >= 0.6;
+  });
+  if (substringMatches.length === 1) {
+    return substringMatches[0].name;
+  }
+
+  return null;
+}
+
+/** Deterministic fast path + LLM fallback for parameter name correction. */
+export async function correctParameterNames(
+  runtime: IAgentRuntime,
+  workflow: N8nWorkflow,
+  detections: UnknownParamDetection[]
+): Promise<N8nWorkflow> {
+  if (detections.length === 0) {
+    return workflow;
+  }
+
+  const correctedWorkflow = JSON.parse(JSON.stringify(workflow)) as N8nWorkflow;
+
+  // Phase 1: deterministic renames (no LLM cost)
+  const needsLLM: UnknownParamDetection[] = [];
+
+  for (const detection of detections) {
+    const node = correctedWorkflow.nodes.find((n) => n.name === detection.nodeName);
+    if (!node) {
+      continue;
+    }
+
+    const remainingUnknowns: string[] = [];
+
+    for (const key of detection.unknownKeys) {
+      const match = fuzzyMatchParam(key, detection.propertyDefs);
+      if (match) {
+        logger.debug(
+          { src: 'plugin:n8n-workflow:generation:paramCorrection' },
+          `Node "${detection.nodeName}": ${key} → ${match} (deterministic)`
+        );
+        node.parameters[match] = node.parameters[key];
+        delete node.parameters[key];
+      } else {
+        remainingUnknowns.push(key);
+      }
+    }
+
+    if (remainingUnknowns.length > 0) {
+      needsLLM.push({
+        ...detection,
+        unknownKeys: remainingUnknowns,
+        currentParams: node.parameters,
+      });
+    }
+  }
+
+  if (needsLLM.length === 0) {
+    return correctedWorkflow;
+  }
+
+  // Phase 2: LLM correction for complex cases (restructuring)
+  logger.debug(
+    { src: 'plugin:n8n-workflow:generation:paramCorrection' },
+    `LLM correction needed for ${needsLLM.length} node(s): ${needsLLM.map((d) => `"${d.nodeName}" (${d.unknownKeys.join(', ')})`).join('; ')}`
+  );
+
+  const corrections = await Promise.all(
+    needsLLM.map(async (detection) => {
+      try {
+        const userPrompt = PARAM_CORRECTION_USER_PROMPT.replace('{nodeType}', detection.nodeType)
+          .replace('{currentParams}', JSON.stringify(detection.currentParams, null, 2))
+          .replace('{propertyDefs}', JSON.stringify(detection.propertyDefs, null, 2));
+
+        const response = await runtime.useModel(ModelType.TEXT_SMALL, {
+          prompt: `${PARAM_CORRECTION_SYSTEM_PROMPT}\n\n${userPrompt}`,
+          temperature: 0,
+        });
+
+        const cleaned = (response as string)
+          .replace(/^[\s\S]*?```(?:json)?\s*\n?/i, '')
+          .replace(/\n?```[\s\S]*$/i, '')
+          .trim();
+
+        const correctedParams = JSON.parse(cleaned) as Record<string, unknown>;
+
+        // Validate: corrected params should only contain valid property names
+        const validNames = new Set(detection.propertyDefs.map((p) => p.name));
+        validNames.add('resource');
+        validNames.add('operation');
+        const invalidKeys = Object.keys(correctedParams).filter((k) => !validNames.has(k));
+        if (invalidKeys.length > 0) {
+          logger.warn(
+            { src: 'plugin:n8n-workflow:generation:paramCorrection' },
+            `LLM returned invalid keys for "${detection.nodeName}": ${invalidKeys.join(', ')} — dropping them`
+          );
+          for (const k of invalidKeys) {
+            delete correctedParams[k];
+          }
+        }
+
+        return { nodeName: detection.nodeName, correctedParams };
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.warn(
+          { src: 'plugin:n8n-workflow:generation:paramCorrection', error: errMsg },
+          `Failed to correct parameters for node "${detection.nodeName}": ${errMsg}`
+        );
+        return null;
+      }
+    })
+  );
+
+  for (const correction of corrections) {
+    if (!correction) {
+      continue;
+    }
+
+    const node = correctedWorkflow.nodes.find((n) => n.name === correction.nodeName);
+    if (!node) {
+      continue;
+    }
+
+    // Preserve resource/operation (already corrected by correctOptionParameters)
+    if (node.parameters.resource !== undefined) {
+      correction.correctedParams.resource = node.parameters.resource;
+    }
+    if (node.parameters.operation !== undefined) {
+      correction.correctedParams.operation = node.parameters.operation;
+    }
+
+    logger.debug(
+      { src: 'plugin:n8n-workflow:generation:paramCorrection' },
+      `Node "${correction.nodeName}": params corrected via LLM — keys: ${Object.keys(correction.correctedParams).join(', ')}`
+    );
+
+    node.parameters = correction.correctedParams;
+  }
+
+  return correctedWorkflow;
 }

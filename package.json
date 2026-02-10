@@ -18,7 +18,9 @@
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "crawl-nodes": "bun run scripts/crawl-nodes.ts"
+    "crawl": "bun run scripts/crawl.ts",
+    "crawl:nodes": "bun run scripts/crawl-nodes.ts",
+    "crawl:schemas": "bun run scripts/crawl-schemas.ts"
   },
   "keywords": [
     "elizaos",

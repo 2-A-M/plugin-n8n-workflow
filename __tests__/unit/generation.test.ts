@@ -271,6 +271,98 @@ describe('generateWorkflow', () => {
     expect(params.prompt).toContain('Gmail');
     expect(params.prompt).toContain('Send email');
   });
+
+  test('injects output schema context for nodes with schemas', async () => {
+    const useModel = mock(() =>
+      Promise.resolve(
+        JSON.stringify({
+          name: 'WF',
+          nodes: [{ name: 'A', type: 't', position: [0, 0] }],
+          connections: {},
+        })
+      )
+    );
+    const runtime = createMockRuntime({ useModel });
+
+    // Gmail has schemas in schemaIndex.json
+    const nodes = [
+      {
+        name: 'n8n-nodes-base.gmail',
+        displayName: 'Gmail',
+        description: 'Send email',
+        group: ['output'],
+        properties: [],
+      },
+    ];
+
+    await generateWorkflow(runtime, 'get emails', nodes as any);
+
+    const callArgs = useModel.mock.calls[0] as any[];
+    const params = callArgs[1] as { prompt: string };
+    expect(params.prompt).toContain('Node Output Schemas');
+    expect(params.prompt).toContain('n8n-nodes-base.gmail');
+  });
+
+  test('injects langchain OpenAI output schema with correct fields', async () => {
+    const useModel = mock(() =>
+      Promise.resolve(
+        JSON.stringify({
+          name: 'WF',
+          nodes: [{ name: 'A', type: 't', position: [0, 0] }],
+          connections: {},
+        })
+      )
+    );
+    const runtime = createMockRuntime({ useModel });
+
+    const nodes = [
+      {
+        name: '@n8n/n8n-nodes-langchain.openAi',
+        displayName: 'OpenAI',
+        description: 'AI',
+        group: ['transform'],
+        properties: [],
+      },
+    ];
+
+    await generateWorkflow(runtime, 'summarize with AI', nodes as any);
+
+    const callArgs = useModel.mock.calls[0] as any[];
+    const params = callArgs[1] as { prompt: string };
+    expect(params.prompt).toContain('Node Output Schemas');
+    expect(params.prompt).toContain('output[0].content[0].text: string');
+    expect(params.prompt).toContain('Do NOT invent field names');
+  });
+
+  test('no output schema section when nodes have no schemas', async () => {
+    const useModel = mock(() =>
+      Promise.resolve(
+        JSON.stringify({
+          name: 'WF',
+          nodes: [{ name: 'A', type: 't', position: [0, 0] }],
+          connections: {},
+        })
+      )
+    );
+    const runtime = createMockRuntime({ useModel });
+
+    // Unknown node with no schema
+    const nodes = [
+      {
+        name: 'n8n-nodes-base.unknownNode',
+        displayName: 'Unknown',
+        description: 'No schema',
+        group: ['transform'],
+        properties: [],
+      },
+    ];
+
+    await generateWorkflow(runtime, 'do something', nodes as any);
+
+    const callArgs = useModel.mock.calls[0] as any[];
+    const params = callArgs[1] as { prompt: string };
+    expect(params.prompt).not.toContain('Node Output Schemas');
+  });
 });
 
 // ============================================================================

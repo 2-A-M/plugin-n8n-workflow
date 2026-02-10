@@ -70,8 +70,11 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Generate node catalog
-        run: bun run crawl-nodes
+      - name: Generate node catalog and schemas
+        run: bun run crawl
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          N8N_HOST: ${{ secrets.N8N_HOST }}
 
       - name: Build package
         run: bun run build

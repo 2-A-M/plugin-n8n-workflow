@@ -149,14 +149,14 @@ export interface NodeDefinition {
   icon?: string;
   iconUrl?: string;
   group: string[];
-  version: number;
+  version: number | number[];
   subtitle?: string;
   defaults: {
     name: string;
     color?: string;
   };
-  inputs: string[];
-  outputs: string[];
+  inputs: string[] | string;
+  outputs: string[] | string;
   credentials?: Array<{
     name: string;
     required: boolean;
@@ -306,6 +306,8 @@ export interface WorkflowDraft {
   prompt: string;
   userId: string;
   createdAt: number;
+  /** ID of the message that created this draft — used to prevent same-turn auto-confirm. */
+  originMessageId?: string;
 }
 
 export interface DraftIntentResult {
@@ -343,4 +345,41 @@ export class UnsupportedIntegrationError extends Error {
     super(`Unsupported integrations: ${unsupportedServices.join(', ')}`);
     this.name = 'UnsupportedIntegrationError';
   }
+}
+
+// Output schema validation types
+
+/**
+ * JSON schema content from n8n output schemas
+ */
+export interface SchemaContent {
+  type: string;
+  properties?: Record<string, unknown>;
+  items?: SchemaContent;
+  [key: string]: unknown;
+}
+
+/**
+ * Expression reference found in node parameters
+ */
+export interface ExpressionRef {
+  fullExpression: string; // "{{ $json.sender }}"
+  field: string; // "sender" or "from.value[0].address"
+  path: string[]; // ["sender"] or ["from", "value", "0", "address"]
+  paramPath: string; // Parameter path where expression was found
+  sourceNodeName?: string; // Node name from $('NodeName') syntax, undefined for $json refs
+}
+
+/**
+ * Invalid output reference detected during validation
+ */
+export interface OutputRefValidation {
+  nodeName: string; // Node with invalid reference
+  expression: string; // The full expression
+  field: string; // Referenced field
+  sourceNodeName: string; // Upstream node
+  sourceNodeType: string; // Upstream node type
+  resource: string; // Resource parameter
+  operation: string; // Operation parameter
+  availableFields: string[]; // Valid fields from schema
 }

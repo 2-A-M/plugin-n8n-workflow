@@ -47,6 +47,7 @@ function createMockApiClient(overrides?: Partial<N8nApiClient>): N8nApiClient {
 }
 
 const baseConfig: N8nPluginConfig = { apiKey: 'key', host: 'http://localhost' };
+const testTagName = 'user:user-001';
 
 // ============================================================================
 // resolveCredentials
@@ -58,7 +59,15 @@ describe('resolveCredentials', () => {
       nodes: [createTriggerNode(), { ...createGmailNode(), credentials: undefined }],
     });
 
-    const res = await resolveCredentials(workflow, 'user-001', baseConfig, null, null, null);
+    const res = await resolveCredentials(
+      workflow,
+      'user-001',
+      baseConfig,
+      null,
+      null,
+      null,
+      testTagName
+    );
     expect(res.missingConnections).toHaveLength(0);
     expect(res.injectedCredentials.size).toBe(0);
   });
@@ -70,7 +79,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       null,
       null,
-      null
+      null,
+      testTagName
     );
     expect(res.missingConnections.length).toBeGreaterThan(0);
     expect(res.missingConnections[0].credType).toBe('gmailOAuth2Api');
@@ -92,7 +102,8 @@ describe('resolveCredentials', () => {
       config,
       null,
       null,
-      null
+      null,
+      testTagName
     );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('preconfigured-cred-id');
     const gmailNode = res.workflow.nodes.find((n) => n.name === 'Gmail');
@@ -111,7 +122,8 @@ describe('resolveCredentials', () => {
       config,
       null,
       null,
-      null
+      null,
+      testTagName
     );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('gmail-cred-from-config');
     expect(res.missingConnections).toHaveLength(0);
@@ -132,7 +144,15 @@ describe('resolveCredentials', () => {
       credentials: { gmailOAuth2Api: 'gmail-cred-with-api' },
     };
 
-    const res = await resolveCredentials(workflow, 'user-001', config, null, null, null);
+    const res = await resolveCredentials(
+      workflow,
+      'user-001',
+      config,
+      null,
+      null,
+      null,
+      testTagName
+    );
     expect(res.injectedCredentials.get('gmailOAuth2')).toBe('gmail-cred-with-api');
     expect(res.missingConnections).toHaveLength(0);
   });
@@ -146,7 +166,15 @@ describe('resolveCredentials', () => {
       credentials: { gmailOAuth2Api: 'gmail-cred', slackApi: 'slack-cred' },
     };
 
-    const res = await resolveCredentials(workflow, 'user-001', config, null, null, null);
+    const res = await resolveCredentials(
+      workflow,
+      'user-001',
+      config,
+      null,
+      null,
+      null,
+      testTagName
+    );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('gmail-cred');
     expect(res.injectedCredentials.get('slackApi')).toBe('slack-cred');
   });
@@ -166,7 +194,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       credStore,
       null,
-      null
+      null,
+      testTagName
     );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('cached-cred-id');
     expect(res.missingConnections).toHaveLength(0);
@@ -187,7 +216,8 @@ describe('resolveCredentials', () => {
       config,
       credStore,
       null,
-      null
+      null,
+      testTagName
     );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('db-cred-id');
   });
@@ -217,11 +247,12 @@ describe('resolveCredentials', () => {
       baseConfig,
       credStore,
       provider,
-      apiClient
+      apiClient,
+      testTagName
     );
 
     expect(apiClient.createCredential).toHaveBeenCalledWith({
-      name: 'gmailOAuth2Api',
+      name: `gmailOAuth2Api_${testTagName}`,
       type: 'gmailOAuth2Api',
       data: oauthData,
     });
@@ -244,7 +275,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       credStore,
       provider,
-      apiClient
+      apiClient,
+      testTagName
     );
 
     expect(credStore.set).toHaveBeenCalledWith('user-001', 'gmailOAuth2Api', 'n8n-cred-123');
@@ -262,7 +294,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       null,
       provider,
-      null
+      null,
+      testTagName
     );
 
     expect(res.missingConnections.length).toBeGreaterThan(0);
@@ -286,7 +319,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       null,
       provider,
-      apiClient
+      apiClient,
+      testTagName
     );
 
     expect(res.missingConnections.length).toBeGreaterThan(0);
@@ -309,7 +343,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       null,
       provider,
-      null
+      null,
+      testTagName
     );
     expect(res.missingConnections.length).toBeGreaterThan(0);
     expect(res.missingConnections[0].authUrl).toBe('https://auth.example.com/connect');
@@ -328,7 +363,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       null,
       provider,
-      null
+      null,
+      testTagName
     );
     expect(res.missingConnections.length).toBeGreaterThan(0);
     expect(res.missingConnections[0].authUrl).toBeUndefined();
@@ -345,7 +381,8 @@ describe('resolveCredentials', () => {
       baseConfig,
       null,
       provider,
-      null
+      null,
+      testTagName
     );
     expect(res.missingConnections.length).toBeGreaterThan(0);
   });
@@ -373,7 +410,8 @@ describe('resolveCredentials', () => {
       config,
       credStore,
       provider,
-      null
+      null,
+      testTagName
     );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('db-wins');
     expect(provider.resolve).not.toHaveBeenCalled();
@@ -396,7 +434,8 @@ describe('resolveCredentials', () => {
       config,
       credStore,
       provider,
-      null
+      null,
+      testTagName
     );
     expect(res.injectedCredentials.get('gmailOAuth2Api')).toBe('config-wins');
     expect(provider.resolve).not.toHaveBeenCalled();
