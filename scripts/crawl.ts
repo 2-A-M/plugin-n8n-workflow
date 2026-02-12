@@ -18,11 +18,11 @@ async function main() {
   await $`bun run scripts/crawl-nodes.ts`;
 
   console.log('\n2/3: Crawling output schemas...');
-  await $`bun run scripts/crawl-schemas.ts`;
+  await $`bun run scripts/crawl-output-schemas.ts`;
 
   console.log('\n3/3: Capturing trigger schemas...');
   if (process.env.N8N_HOST && process.env.N8N_API_KEY) {
-    await $`bun run scripts/capture-trigger-schemas.ts --from-existing`;
+    await $`bun run scripts/crawl-triggers-live.ts --from-existing`;
   } else {
     console.log('   Skipped (N8N_HOST / N8N_API_KEY not set)');
   }

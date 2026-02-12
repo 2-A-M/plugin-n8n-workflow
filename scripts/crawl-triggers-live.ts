@@ -12,7 +12,7 @@
  * 4. Save schemas to triggerSchemaIndex.json
  *
  * Usage:
- *   N8N_HOST=http://localhost:5678 N8N_API_KEY=xxx bun run scripts/capture-trigger-schemas.ts
+ *   N8N_HOST=http://localhost:5678 N8N_API_KEY=xxx bun run scripts/crawl-triggers-live.ts
  *
  * Options:
  *   --trigger=gmail          Only capture triggers matching this name

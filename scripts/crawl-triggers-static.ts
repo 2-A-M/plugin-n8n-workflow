@@ -14,7 +14,7 @@
  * 7. Detect n8n transformations (simplifyOutput, etc.) and apply them
  * 8. Save to triggerSchemaIndex.json
  *
- * Usage: bun run scripts/crawl-trigger-schemas.ts
+ * Usage: bun run scripts/crawl-triggers-static.ts
  */
 
 import * as fs from 'fs';

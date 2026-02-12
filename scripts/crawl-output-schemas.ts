@@ -208,6 +208,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('crawl-schemas failed:', err);
+  console.error('crawl-output-schemas failed:', err);
   process.exit(1);
 });

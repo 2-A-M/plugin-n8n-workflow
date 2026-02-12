@@ -1,6 +1,6 @@
 {
   "name": "@elizaos/plugin-n8n-workflow",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "ElizaOS plugin for generating and managing n8n workflows from natural language",
   "type": "module",
   "main": "dist/index.js",
@@ -20,7 +20,7 @@
     "format:check": "prettier --check \"src/**/*.ts\"",
     "crawl": "bun run scripts/crawl.ts",
     "crawl:nodes": "bun run scripts/crawl-nodes.ts",
-    "crawl:schemas": "bun run scripts/crawl-schemas.ts"
+    "crawl:schemas": "bun run scripts/crawl-output-schemas.ts"
   },
   "keywords": [
     "elizaos",

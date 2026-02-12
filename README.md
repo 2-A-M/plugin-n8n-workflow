@@ -904,8 +904,9 @@ src/
 scripts/
 ├── crawl.ts                     # Master crawl (runs all 3 steps below)
 ├── crawl-nodes.ts               # Step 1: Extract node defs from n8n-nodes-base
-├── crawl-schemas.ts             # Step 2: Extract output schemas from __schema__/ dirs
-└── capture-trigger-schemas.ts   # Step 3: Capture trigger schemas from live n8n
+├── crawl-output-schemas.ts      # Step 2: Extract output schemas from __schema__/ dirs
+├── crawl-triggers-live.ts       # Step 3: Capture trigger schemas from live n8n
+└── crawl-triggers-static.ts     # Alternative: Extract trigger schemas from code + OpenAPI specs
 ```
 
 ---
@@ -921,8 +922,8 @@ Runs three steps:
 | Step | Script | Generates | Requires |
 |------|--------|-----------|----------|
 | 1/3 | `crawl-nodes.ts` | `defaultNodes.json` — 457 node definitions with parameters, versions, credentials | n8n-nodes-base package |
-| 2/3 | `crawl-schemas.ts` | `schemaIndex.json` — output schemas per node/resource/operation | n8n-nodes-base `__schema__/` dirs + langchain overrides |
-| 3/3 | `capture-trigger-schemas.ts` | `triggerSchemaIndex.json` — trigger output schemas | `N8N_HOST` + `N8N_API_KEY` env vars |
+| 2/3 | `crawl-output-schemas.ts` | `schemaIndex.json` — output schemas per node/resource/operation | n8n-nodes-base `__schema__/` dirs + langchain overrides |
+| 3/3 | `crawl-triggers-live.ts` | `triggerSchemaIndex.json` — trigger output schemas | `N8N_HOST` + `N8N_API_KEY` env vars |
 
 **Step 3 is skipped** if `N8N_HOST` / `N8N_API_KEY` are not set (a warning is printed).
 
@@ -932,7 +933,7 @@ The LLM receives output schemas during workflow generation to prevent hallucinat
 
 - **n8n-nodes-base nodes**: Schemas are crawled from `__schema__/` directories in the npm package
 - **@n8n/n8n-nodes-langchain nodes**: No `__schema__/` dirs exist — schemas are defined in `src/data/langchain-output-schemas.json` and merged at crawl time
-- **Trigger nodes**: Schemas are captured from real n8n executions via `capture-trigger-schemas.ts`
+- **Trigger nodes**: Schemas are captured from real n8n executions via `crawl-triggers-live.ts`
 
 The generation prompt includes output schemas for all relevant nodes, so the LLM uses correct field paths like `$json.output[0].content[0].text` instead of inventing wrong ones like `$json.choices[0].message.content`.
 

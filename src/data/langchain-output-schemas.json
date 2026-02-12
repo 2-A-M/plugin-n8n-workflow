@@ -1,5 +1,5 @@
 {
-  "_comment": "Output schemas for @n8n/n8n-nodes-langchain nodes (no __schema__/ dirs in package). Derived from source code. Merged into schemaIndex.json by crawl-schemas.ts.",
+  "_comment": "Output schemas for @n8n/n8n-nodes-langchain nodes (no __schema__/ dirs in package). Derived from source code. Merged into schemaIndex.json by crawl-output-schemas.ts.",
   "_langchainVersion": "0.6.x",
   "nodes": {
     "@n8n/n8n-nodes-langchain.openAi": {
