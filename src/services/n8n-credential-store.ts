@@ -3,7 +3,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { credentialMappings } from '../db/schema';
 import { N8N_CREDENTIAL_STORE_TYPE } from '../types/index';
-import type { N8nCredentialStoreApi } from '../types/index';
+import type { N8nCredentialStoreApi, CredentialMapping } from '../types/index';
 
 /**
  * Default DB-backed credential store.
@@ -65,5 +65,17 @@ export class N8nCredentialStore extends Service implements N8nCredentialStoreApi
         target: [credentialMappings.userId, credentialMappings.credType],
         set: { n8nCredentialId: n8nCredId, updatedAt: sql`now()` },
       });
+  }
+
+  async listByUser(userId: string): Promise<CredentialMapping[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select({
+        credType: credentialMappings.credType,
+        n8nCredentialId: credentialMappings.n8nCredentialId,
+      })
+      .from(credentialMappings)
+      .where(eq(credentialMappings.userId, userId));
+    return rows;
   }
 }

@@ -545,6 +545,16 @@ export class N8nWorkflowService extends Service {
     return response.data;
   }
 
+  async listExecutions(params?: {
+    workflowId?: string;
+    status?: 'canceled' | 'error' | 'running' | 'success' | 'waiting';
+    limit?: number;
+    cursor?: string;
+  }): Promise<{ data: N8nExecution[]; nextCursor?: string }> {
+    const client = this.getClient();
+    return client.listExecutions(params);
+  }
+
   async getExecutionDetail(executionId: string): Promise<N8nExecution> {
     const client = this.getClient();
     return client.getExecution(executionId);

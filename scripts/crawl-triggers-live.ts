@@ -129,18 +129,22 @@ async function n8nRequest<T>(method: string, endpoint: string, body?: unknown): 
   return text ? JSON.parse(text) : (undefined as unknown as T);
 }
 
-// ─── Known credentials ──────────────────────────────────────────────────────
-// n8n cloud doesn't support GET /credentials — use this map.
+// ─── Credentials map ────────────────────────────────────────────────────────
+// Reads credential IDs from .credentials-map.json (created by create-credentials.ts).
+// n8n cloud doesn't support GET /credentials, so IDs are persisted locally.
 
-const KNOWN_CREDENTIALS: Record<string, string> = {
-  gmailOAuth2: 'hjSOdmEwxXzQpj3V',
-  googleCalendarOAuth2Api: 'yHjZgYhYPxTOFwdr',
-  googleDriveOAuth2Api: 'LoKYrCVJOpU8PhAM',
-  googleSheetsTriggerOAuth2Api: 'UcHkFKN0Khm7z1O3',
-  googleBusinessProfileOAuth2Api: 'lo6OS1caDfS84dgR',
-  githubOAuth2Api: 'T3JHHfCQmwbQgtEr',
-  linearOAuth2Api: 'jADHC6LxJ8ax7JMc',
-};
+const CRED_MAP_PATH = path.join(__dirname, '..', '.credentials-map.json');
+
+function loadCredentialsMap(): Record<string, string> {
+  if (!fs.existsSync(CRED_MAP_PATH)) return {};
+  const raw: Record<string, { id: string }> = JSON.parse(fs.readFileSync(CRED_MAP_PATH, 'utf-8'));
+  // Flatten to { credType: id }
+  const map: Record<string, string> = {};
+  for (const [credType, entry] of Object.entries(raw)) {
+    map[credType] = entry.id;
+  }
+  return map;
+}
 
 // ─── Trigger discovery from defaultNodes.json ────────────────────────────────
 
@@ -195,6 +199,9 @@ function buildDefaultParameters(
   for (const prop of nodeDef.properties) {
     if (prop.default !== undefined && prop.default !== '' && prop.default !== null) {
       params[prop.name] = prop.default;
+    } else if (prop.type === 'options' && prop.options?.length) {
+      // For options fields with no default, pick the first option
+      params[prop.name] = prop.options[0].value;
     }
   }
 
@@ -317,8 +324,8 @@ async function main() {
   if (filterTrigger) console.log(`Filter: ${filterTrigger}`);
   console.log();
 
-  // Step 1: Build credential map
-  const credByType = new Map(Object.entries(KNOWN_CREDENTIALS));
+  // Step 1: Build credential map from .credentials-map.json
+  const credByType = new Map(Object.entries(loadCredentialsMap()));
 
   // Step 2: Discover triggers from defaultNodes.json
   let triggers = discoverTriggers();
@@ -327,25 +334,34 @@ async function main() {
       t.nodeType.toLowerCase().includes(filterTrigger.toLowerCase())
     );
   }
-  const triggersWithCreds = triggers.filter((t) =>
-    t.credentialTypes.some((ct) => credByType.has(ct))
-  );
-  console.log(`${triggersWithCreds.length} triggers with matching credentials\n`);
 
   // Step 3: Check for existing [Schema Capture] workflows first
   const existingWorkflows = await findExistingCaptureWorkflows();
+
+  // In --from-existing mode, we don't need credentials — just match by existing workflows.
+  // Otherwise, filter to triggers that have credentials in the local map.
+  const activeTriggers = fromExisting
+    ? triggers.filter((t) => existingWorkflows.some((w) => w.triggerType === t.nodeType))
+    : triggers.filter((t) => t.credentialTypes.some((ct) => credByType.has(ct)));
+
+  console.log(
+    fromExisting
+      ? `${activeTriggers.length} triggers with existing [Schema Capture] workflows\n`
+      : `${activeTriggers.length} triggers with matching credentials\n`
+  );
 
   const result: TriggerSchemaIndex = {
     version: '2.0.0',
     generatedAt: new Date().toISOString(),
     source: 'execution',
     triggers: {},
-    stats: { total: triggersWithCreds.length, captured: 0, failed: 0, skipped: 0 },
+    stats: { total: activeTriggers.length, captured: 0, failed: 0, skipped: 0 },
   };
 
-  for (const trigger of triggersWithCreds) {
-    const credType = trigger.credentialTypes.find((ct) => credByType.has(ct))!;
-    const credId = credByType.get(credType)!;
+  for (const trigger of activeTriggers) {
+    const credType =
+      trigger.credentialTypes.find((ct) => credByType.has(ct)) || trigger.credentialTypes[0] || '';
+    const credId = credByType.get(credType) || '';
 
     console.log(`── ${trigger.displayName} ──`);
 

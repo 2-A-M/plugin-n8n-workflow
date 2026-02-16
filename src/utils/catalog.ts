@@ -14,6 +14,11 @@ import defaultNodesData from '../data/defaultNodes.json' assert { type: 'json' }
 
 const NODE_CATALOG = defaultNodesData as NodeDefinition[];
 
+/** Get all nodes in the catalog. Used by route handlers for unfiltered listing. */
+export function getAllNodes(): NodeDefinition[] {
+  return NODE_CATALOG;
+}
+
 /**
  * Look up a node definition by its type name.
  *

@@ -53,6 +53,9 @@ jobs:
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
           N8N_HOST: ${{ secrets.N8N_HOST }}
       - run: bun run test:e2e
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          N8N_HOST: ${{ secrets.N8N_HOST }}
 
   build:
     name: Build

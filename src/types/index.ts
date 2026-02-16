@@ -273,9 +273,15 @@ export function isCredentialProvider(service: unknown): service is CredentialPro
 
 export const N8N_CREDENTIAL_STORE_TYPE = 'n8n_credential_store';
 
+export interface CredentialMapping {
+  credType: string;
+  n8nCredentialId: string;
+}
+
 export interface N8nCredentialStoreApi {
   get(userId: string, credType: string): Promise<string | null>;
   set(userId: string, credType: string, n8nCredId: string): Promise<void>;
+  listByUser(userId: string): Promise<CredentialMapping[]>;
 }
 
 // Credential resolution types

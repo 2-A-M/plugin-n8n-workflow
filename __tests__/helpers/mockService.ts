@@ -107,7 +107,17 @@ export function createMockService(
         createExecution({ id: 'exec-002', status: 'error' }),
       ])
     ),
+    getWorkflow: mock(() => Promise.resolve(createWorkflowResponse())),
     getExecutionDetail: mock(() => Promise.resolve(createExecution())),
+    listExecutions: mock(() =>
+      Promise.resolve({
+        data: [
+          createExecution({ id: 'exec-001', status: 'success' }),
+          createExecution({ id: 'exec-002', status: 'error' }),
+        ],
+        nextCursor: undefined,
+      })
+    ),
     ...overrides,
   } as unknown as N8nWorkflowService;
 }

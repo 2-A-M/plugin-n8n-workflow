@@ -14,6 +14,7 @@ import {
   activeWorkflowsProvider,
   pendingDraftProvider,
 } from './providers/index';
+import { n8nRoutes } from './routes/index';
 
 /**
  * n8n Workflow Plugin for ElizaOS
@@ -67,6 +68,8 @@ export const n8nWorkflowPlugin: Plugin = {
   ],
 
   providers: [workflowStatusProvider, activeWorkflowsProvider, pendingDraftProvider],
+
+  routes: n8nRoutes,
 
   init: async (_config: Record<string, string>, runtime: IAgentRuntime): Promise<void> => {
     const apiKey = runtime.getSetting('N8N_API_KEY');

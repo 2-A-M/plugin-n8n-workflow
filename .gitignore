@@ -41,6 +41,12 @@ src/data/defaultNodes.json
 src/data/schemaIndex.json
 src/data/triggerSchemaIndex.json
 
+# Credential IDs (created by create-credentials.ts, contains n8n instance-specific IDs)
+.credentials-map.json
+
 # Script cache
 .cache/
+
+# Environment variables
+.env
 

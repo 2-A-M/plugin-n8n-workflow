@@ -187,6 +187,33 @@ export function createInvalidWorkflow_duplicateNames(): N8nWorkflow {
   };
 }
 
+export function createSimpleWorkflowNoCredentials(overrides?: Partial<N8nWorkflow>): N8nWorkflow {
+  return {
+    name: 'Simple No-Creds Workflow',
+    nodes: [
+      createTriggerNode(),
+      {
+        name: 'Set',
+        type: 'n8n-nodes-base.set',
+        typeVersion: 3,
+        position: [500, 300],
+        parameters: {
+          assignments: {
+            assignments: [{ name: 'message', value: 'Hello World', type: 'string' }],
+          },
+          options: {},
+        },
+      },
+    ],
+    connections: {
+      'Schedule Trigger': {
+        main: [[{ node: 'Set', type: 'main', index: 0 }]],
+      },
+    },
+    ...overrides,
+  };
+}
+
 // ============================================================================
 // API RESPONSES
 // ============================================================================
