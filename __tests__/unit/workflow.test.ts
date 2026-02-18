@@ -806,6 +806,97 @@ describe('detectUnknownParameters', () => {
     expect(detections.length).toBe(1);
     expect(detections[0].nodeName).toBe('OpenAI');
   });
+
+  test('Code node: jsCode is not flagged as unknown when LLM omits language/mode (defaults resolve visibility)', () => {
+    // LLM generates jsCode without setting language or mode — both have defaults that
+    // make jsCode visible. Without default resolution, jsCode would be wrongly flagged.
+    const workflow = {
+      name: 'Code Without Defaults',
+      nodes: [
+        {
+          name: 'Code',
+          type: 'n8n-nodes-base.code',
+          typeVersion: 2,
+          position: [250, 300] as [number, number],
+          parameters: { jsCode: 'return items;' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(0);
+  });
+
+  test('Gmail node: subject/sendTo/message not flagged as unknown when LLM omits resource/operation (defaults resolve visibility)', () => {
+    // LLM generates email params without resource/operation — both have defaults
+    // (resource="message", operation="send") that make these fields visible.
+    const workflow = {
+      name: 'Gmail Without Resource',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: { sendTo: 'user@example.com', subject: 'Test', message: 'Hello' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(0);
+  });
+
+  test('Gmail node: truly unknown LLM param (toEmail) still detected, propertyDefs includes real field names for correction', () => {
+    // toEmail does not exist — sendTo does. With default resolution, the LLM correction
+    // gets propertyDefs that include sendTo so it can map toEmail → sendTo.
+    const workflow = {
+      name: 'Gmail Wrong Param',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: { toEmail: 'user@example.com', subject: 'Test', message: 'Hello' },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(1);
+    expect(detections[0].unknownKeys).toContain('toEmail');
+    expect(detections[0].unknownKeys).not.toContain('subject');
+    expect(detections[0].unknownKeys).not.toContain('message');
+    // propertyDefs should include sendTo so the LLM can map toEmail → sendTo
+    const hasSendTo = detections[0].propertyDefs.some((p) => p.name === 'sendTo');
+    expect(hasSendTo).toBe(true);
+  });
+
+  test('Gmail node: partial omission — LLM sets resource but omits operation, dependent fields still visible', () => {
+    // LLM explicitly sets resource="message" but omits operation.
+    // operation default ("send") must still resolve via pass-2 so sendTo/subject/message stay visible.
+    const workflow = {
+      name: 'Gmail Partial',
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2.1,
+          position: [250, 300] as [number, number],
+          parameters: {
+            resource: 'message',
+            sendTo: 'bob@test.com',
+            subject: 'Hi',
+            message: 'Hello',
+          },
+        },
+      ],
+      connections: {},
+    };
+    const detections = detectUnknownParameters(workflow);
+    expect(detections.length).toBe(0);
+  });
 });
 
 // ============================================================================

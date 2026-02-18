@@ -1,6 +1,7 @@
 import { logger } from '@elizaos/core';
 import type {
   N8nWorkflow,
+  NodeDefinition,
   NodeProperty,
   WorkflowValidationResult,
   OutputRefValidation,
@@ -160,11 +161,12 @@ export function validateNodeParameters(workflow: N8nWorkflow): string[] {
       continue;
     } // Unknown node type — skip
 
+    const effectiveParams = buildEffectiveParams(nodeDef, node);
     for (const prop of nodeDef.properties) {
       if (!prop.required) {
         continue;
       }
-      if (!isPropertyVisible(prop, node.parameters)) {
+      if (!isPropertyVisible(prop, effectiveParams)) {
         continue;
       }
 
@@ -177,6 +179,49 @@ export function validateNodeParameters(workflow: N8nWorkflow): string[] {
   }
 
   return warnings;
+}
+
+/**
+ * Build effective parameters for visibility checks by applying property defaults in two passes.
+ *
+ * Pass 1: always-visible props (no displayOptions) — e.g. `resource` default "message".
+ * Pass 2: props whose displayOptions are satisfied by pass-1 defaults — e.g. `operation`
+ *   default "send" becomes visible once `resource` is known.
+ *
+ * Two passes resolve the depth-2 chains present in n8n node definitions
+ * (root prop → one level of conditional). The `@version` key is injected as the
+ * node's typeVersion so displayOptions conditions that reference it work correctly.
+ */
+function buildEffectiveParams(
+  nodeDef: NodeDefinition,
+  node: { typeVersion: number; parameters: Record<string, unknown> }
+): Record<string, unknown> {
+  const effective: Record<string, unknown> = { '@version': node.typeVersion };
+
+  // Pass 1: always-visible properties (no displayOptions)
+  for (const prop of nodeDef.properties) {
+    if (!prop.displayOptions && !(prop.name in node.parameters) && prop.default !== undefined) {
+      effective[prop.name] = prop.default;
+    }
+  }
+
+  // Merge actual params so pass 2 sees LLM-provided values (e.g. resource set
+  // explicitly while operation is omitted — operation's displayOptions depends on resource).
+  Object.assign(effective, node.parameters);
+
+  // Pass 2: properties with displayOptions that are now satisfied by pass-1 defaults + actual params
+  for (const prop of nodeDef.properties) {
+    if (
+      prop.displayOptions &&
+      !(prop.name in effective) &&
+      prop.default !== undefined &&
+      isPropertyVisible(prop, effective)
+    ) {
+      effective[prop.name] = prop.default;
+    }
+  }
+
+  return effective;
 }
 
 /**
@@ -445,8 +490,9 @@ export function correctOptionParameters(workflow: N8nWorkflow): number {
       corrections += fixOptionValue(node, prop);
     }
 
+    const effectiveParamsForDeps = buildEffectiveParams(nodeDef, node);
     for (const prop of dependent) {
-      if (!isPropertyVisible(prop, node.parameters)) {
+      if (!isPropertyVisible(prop, effectiveParamsForDeps)) {
         continue;
       }
       corrections += fixOptionValue(node, prop);
@@ -643,10 +689,13 @@ export function detectUnknownParameters(workflow: N8nWorkflow): UnknownParamDete
       continue;
     }
 
-    // Compute visible property names using full definition (with displayOptions)
+    // Compute visible property names using effective parameters (actual + defaults).
+    // Defaults are applied for always-visible props first, then for newly-visible props,
+    // so that chained displayOptions (resource → operation → field) resolve correctly.
+    const effectiveParams = buildEffectiveParams(nodeDef, node);
     const visibleNames = new Set<string>();
     for (const prop of nodeDef.properties) {
-      if (isPropertyVisible(prop, node.parameters)) {
+      if (isPropertyVisible(prop, effectiveParams)) {
         visibleNames.add(prop.name);
       }
     }
