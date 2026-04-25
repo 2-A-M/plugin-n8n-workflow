@@ -4,7 +4,11 @@ node_modules/
 .pnp.js
 
 # Build outputs
-dist/
+# NOTE (Milady fork): dist/ IS committed in this fork because we patch dist/
+# directly rather than running `tsc` (upstream peerDep is @elizaos/core@1.7.2,
+# Milady's workspace ships @elizaos/core@2.0.0-alpha.* — a fresh tsc build
+# fails on type-shape mismatches). Until the plugin is rebased on current
+# core, dist/ is the canonical runtime artifact and ships with the source.
 build/
 *.tsbuildinfo
 

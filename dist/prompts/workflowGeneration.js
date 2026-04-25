@@ -383,3 +383,4 @@ Prompt: "connect Slack and Gmail"
 
 **IMPORTANT**: Always generate a complete, valid workflow even if assumptions are made. Never leave placeholders or incomplete nodes. The \`requiresClarification\` questions will be shown to the user alongside the preview — they can then refine their request.
 `;
+//# sourceMappingURL=workflowGeneration.js.map

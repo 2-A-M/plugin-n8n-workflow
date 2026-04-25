@@ -1,0 +1,1 @@
+{"version":3,"file":"feasibility.js","sourceRoot":"","sources":["../../src/schemas/feasibility.ts"],"names":[],"mappings":"AAAA,MAAM,CAAC,MAAM,iBAAiB,GAAG;IAC/B,IAAI,EAAE,QAAQ;IACd,UAAU,EAAE;QACV,QAAQ,EAAE,EAAE,IAAI,EAAE,SAAS,EAAE;QAC7B,MAAM,EAAE,EAAE,IAAI,EAAE,QAAQ,EAAE;KAC3B;IACD,QAAQ,EAAE,CAAC,UAAU,EAAE,QAAQ,CAAC;CACjC,CAAC"}
