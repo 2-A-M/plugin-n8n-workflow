@@ -21,6 +21,7 @@ import {
   correctOptionParameters,
   detectUnknownParameters,
   ensureExpressionPrefix,
+  injectMissingCredentialBlocks,
 } from '../utils/workflow';
 import { resolveCredentials } from '../utils/credentialResolver';
 import type {
@@ -289,6 +290,23 @@ export class N8nWorkflowService extends Service {
       `Generated workflow with ${workflow.nodes?.length || 0} nodes`
     );
 
+    // Safety net: even with the MANDATORY INVARIANT prompt rule, the LLM
+    // sometimes omits the `credentials` block on credentialed nodes. Inject
+    // it deterministically based on the node's catalog definition + the
+    // host's supported cred types so resolveCredentials can mint the
+    // credential server-side instead of falling back to a manual UI step.
+    const injectedCreds = injectMissingCredentialBlocks(
+      workflow,
+      finalNodeDefs,
+      runtimeContext
+    );
+    if (injectedCreds > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Injected ${injectedCreds} missing credentials block(s) (LLM omitted)`
+      );
+    }
+
     normalizeTriggerSimpleParam(workflow);
 
     const optionFixes = correctOptionParameters(workflow);
@@ -386,6 +404,21 @@ export class N8nWorkflowService extends Service {
       combinedDefs,
       runtimeContext
     );
+
+    // Safety net: same deterministic credential-block injection as
+    // generateWorkflowDraft. Modification regenerations are equally prone
+    // to dropping the credentials block.
+    const injectedCreds = injectMissingCredentialBlocks(
+      workflow,
+      combinedDefs,
+      runtimeContext
+    );
+    if (injectedCreds > 0) {
+      logger.debug(
+        { src: 'plugin:n8n-workflow:service:main' },
+        `Injected ${injectedCreds} missing credentials block(s) on modify (LLM omitted)`
+      );
+    }
 
     normalizeTriggerSimpleParam(workflow);
 
