@@ -269,6 +269,52 @@ export function isCredentialProvider(service: unknown): service is CredentialPro
   return typeof (service as Record<string, unknown>).resolve === 'function';
 }
 
+// Runtime context provider types
+
+export const N8N_RUNTIME_CONTEXT_PROVIDER_TYPE = 'n8n_runtime_context_provider';
+
+export interface RuntimeContextSupportedCredential {
+  credType: string;
+  friendlyName: string;
+  nodeTypes: string[];
+}
+
+/**
+ * Optional runtime-supplied context the host injects into the workflow-generation
+ * prompt. The plugin treats this as advisory information for the LLM:
+ * - `supportedCredentials` becomes a "## Available Credentials" section so the
+ *   LLM only references credential types the host can actually resolve.
+ * - `facts` becomes a "## Runtime Facts" section with real values (Discord
+ *   guilds/channels, the user's Gmail email, etc.) so the LLM substitutes
+ *   them verbatim instead of emitting `{{YOUR_…}}` placeholders.
+ *
+ * The plugin works without a provider — both sections are simply omitted.
+ */
+export interface RuntimeContext {
+  supportedCredentials: RuntimeContextSupportedCredential[];
+  facts: string[];
+}
+
+export interface RuntimeContextProviderInput {
+  userId: string;
+  relevantNodes: NodeDefinition[];
+  relevantCredTypes: string[];
+}
+
+export interface RuntimeContextProvider {
+  getRuntimeContext(input: RuntimeContextProviderInput): Promise<RuntimeContext>;
+}
+
+/**
+ * Type guard to check if a service implements RuntimeContextProvider.
+ */
+export function isRuntimeContextProvider(service: unknown): service is RuntimeContextProvider {
+  if (!service || typeof service !== 'object') {
+    return false;
+  }
+  return typeof (service as Record<string, unknown>).getRuntimeContext === 'function';
+}
+
 // Credential store types
 
 export const N8N_CREDENTIAL_STORE_TYPE = 'n8n_credential_store';

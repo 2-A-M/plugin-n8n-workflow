@@ -9,6 +9,7 @@ import {
   NodeSearchResult,
   FeasibilityResult,
   OutputRefValidation,
+  RuntimeContext,
 } from '../types/index';
 import {
   KEYWORD_EXTRACTION_SYSTEM_PROMPT,
@@ -262,13 +263,50 @@ function buildOutputSchemaContext(nodes: NodeDefinition[]): string {
   return `\n## Node Output Schemas\n\nWhen referencing output data from a previous node using expressions like \`{{ $json.field }}\`, use ONLY the field paths listed below. Do NOT invent field names from your training data.\n\n${sections.join('\n\n')}`;
 }
 
+/**
+ * Render the optional host-supplied runtime context as two prompt sections:
+ * `## Available Credentials` (which credential types the host can resolve) and
+ * `## Runtime Facts` (real values like Discord guild/channel IDs, the user's
+ * email). Returns the empty string when the host did not register a provider
+ * — preserving exact baseline behavior for non-host installs.
+ */
+function buildRuntimeContextSections(ctx?: RuntimeContext): string {
+  if (!ctx) {
+    return '';
+  }
+  const lines: string[] = [];
+  if (ctx.supportedCredentials?.length) {
+    lines.push('## Available Credentials');
+    lines.push(
+      'These credential types are pre-resolved by the host. Attach the credentials block to every relevant node — the host injects the real id post-generation.'
+    );
+    for (const c of ctx.supportedCredentials) {
+      lines.push(
+        `- ${c.credType}: name "${c.friendlyName}" — applies to: ${c.nodeTypes.join(', ')}`
+      );
+    }
+    lines.push('');
+  }
+  if (ctx.facts?.length) {
+    lines.push('## Runtime Facts');
+    lines.push('Use these real values verbatim instead of placeholders.');
+    for (const f of ctx.facts) {
+      lines.push(`- ${f}`);
+    }
+    lines.push('');
+  }
+  return lines.length ? `\n${lines.join('\n')}\n` : '';
+}
+
 export async function generateWorkflow(
   runtime: IAgentRuntime,
   userPrompt: string,
-  relevantNodes: NodeDefinition[]
+  relevantNodes: NodeDefinition[],
+  runtimeContext?: RuntimeContext
 ): Promise<N8nWorkflow> {
   const simplifiedNodes = relevantNodes.map(simplifyNodeForLLM);
   const outputSchemaCtx = buildOutputSchemaContext(relevantNodes);
+  const runtimeCtxSections = buildRuntimeContextSections(runtimeContext);
 
   const fullPrompt = `${WORKFLOW_GENERATION_SYSTEM_PROMPT}
 
@@ -277,7 +315,7 @@ export async function generateWorkflow(
 ${JSON.stringify(simplifiedNodes, null, 2)}
 
 Use these node definitions to generate the workflow. Each node's "properties" field defines the available parameters.
-${outputSchemaCtx}
+${outputSchemaCtx}${runtimeCtxSections}
 
 ## User Request
 
@@ -304,12 +342,14 @@ export async function modifyWorkflow(
   runtime: IAgentRuntime,
   existingWorkflow: N8nWorkflow,
   modificationRequest: string,
-  relevantNodes: NodeDefinition[]
+  relevantNodes: NodeDefinition[],
+  runtimeContext?: RuntimeContext
 ): Promise<N8nWorkflow> {
   const { _meta, ...workflowForLLM } = existingWorkflow;
 
   const simplifiedNodes = relevantNodes.map(simplifyNodeForLLM);
   const outputSchemaCtx = buildOutputSchemaContext(relevantNodes);
+  const runtimeCtxSections = buildRuntimeContextSections(runtimeContext);
 
   const fullPrompt = `${WORKFLOW_GENERATION_SYSTEM_PROMPT}
 
@@ -318,7 +358,7 @@ export async function modifyWorkflow(
 ${JSON.stringify(simplifiedNodes, null, 2)}
 
 Use these node definitions to modify the workflow. Each node's "properties" field defines the available parameters.
-${outputSchemaCtx}
+${outputSchemaCtx}${runtimeCtxSections}
 
 ## Existing Workflow (modify this)
 
