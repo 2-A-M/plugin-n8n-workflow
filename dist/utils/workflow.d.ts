@@ -1,4 +1,4 @@
-import type { N8nWorkflow, NodeProperty, WorkflowValidationResult, OutputRefValidation } from '../types/index';
+import type { N8nWorkflow, NodeDefinition, NodeProperty, WorkflowValidationResult, OutputRefValidation, RuntimeContext } from '../types/index';
 export declare function validateWorkflow(workflow: N8nWorkflow): WorkflowValidationResult;
 export declare function validateNodeParameters(workflow: N8nWorkflow): string[];
 export declare function validateNodeInputs(workflow: N8nWorkflow): string[];
@@ -35,4 +35,9 @@ export declare function detectUnknownParameters(workflow: N8nWorkflow): UnknownP
  * Returns the number of values prefixed.
  */
 export declare function ensureExpressionPrefix(workflow: N8nWorkflow): number;
+/**
+ * Deterministic safety net: attach a `credentials` block to every node that
+ * needs one but had it omitted by the LLM. Returns the number of injected blocks.
+ */
+export declare function injectMissingCredentialBlocks(workflow: N8nWorkflow, relevantNodes: NodeDefinition[], runtimeContext: RuntimeContext | undefined): number;
 //# sourceMappingURL=workflow.d.ts.map

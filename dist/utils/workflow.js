@@ -570,6 +570,75 @@ export function ensureExpressionPrefix(workflow) {
     }
     return count;
 }
+/**
+ * Deterministic safety net: attach a `credentials` block to every node that
+ * needs one but had it omitted by the LLM. See src/utils/workflow.ts for
+ * full doc. resolveCredentials only fires when the block is present, so
+ * an omission means the credential never gets minted server-side.
+ */
+export function injectMissingCredentialBlocks(workflow, relevantNodes, runtimeContext) {
+    if (!runtimeContext?.supportedCredentials?.length) {
+        return 0;
+    }
+    const supportedByNodeType = new Map();
+    for (const sc of runtimeContext.supportedCredentials) {
+        for (const nodeType of sc.nodeTypes) {
+            if (!supportedByNodeType.has(nodeType)) {
+                supportedByNodeType.set(nodeType, new Map());
+            }
+            supportedByNodeType.get(nodeType).set(sc.credType, sc.friendlyName);
+        }
+    }
+    if (supportedByNodeType.size === 0) {
+        return 0;
+    }
+    const defByType = new Map(relevantNodes.map((n) => [n.name, n]));
+    let injected = 0;
+    for (const node of workflow.nodes) {
+        if (node.credentials && Object.keys(node.credentials).length > 0) {
+            continue;
+        }
+        const def = defByType.get(node.type);
+        if (!def?.credentials?.length) {
+            continue;
+        }
+        const supportedForType = supportedByNodeType.get(node.type);
+        if (!supportedForType?.size) {
+            continue;
+        }
+        const auth = typeof node.parameters?.authentication === 'string'
+            ? node.parameters.authentication
+            : null;
+        const candidate = def.credentials.find((c) => {
+            if (!supportedForType.has(c.name)) {
+                return false;
+            }
+            const showOpts = c.displayOptions?.show;
+            if (showOpts?.authentication && showOpts.authentication.length > 0) {
+                return auth ? showOpts.authentication.includes(auth) : false;
+            }
+            return true;
+        });
+        if (!candidate) {
+            continue;
+        }
+        const friendlyName = supportedForType.get(candidate.name) ?? candidate.name;
+        node.credentials = {
+            [candidate.name]: {
+                id: '{{CREDENTIAL_ID}}',
+                name: friendlyName,
+            },
+        };
+        logger.debug({
+            src: 'plugin:n8n-workflow:utils:workflow',
+            node: node.name,
+            nodeType: node.type,
+            credType: candidate.name,
+        }, 'Injected missing credentials block on node (LLM omitted it)');
+        injected++;
+    }
+    return injected;
+}
 function prefixExpressions(obj) {
     let count = 0;
     for (const key of Object.keys(obj)) {

@@ -3,7 +3,7 @@ import { N8nApiClient } from '../utils/api';
 import { searchNodes, filterNodesByIntegrationSupport } from '../utils/catalog';
 import { getUserTagName } from '../utils/context';
 import { extractKeywords, generateWorkflow, modifyWorkflow, collectExistingNodeDefinitions, assessFeasibility, correctFieldReferences, correctParameterNames, } from '../utils/generation';
-import { positionNodes, validateWorkflow, validateNodeParameters, validateNodeInputs, validateOutputReferences, normalizeTriggerSimpleParam, correctOptionParameters, detectUnknownParameters, ensureExpressionPrefix, } from '../utils/workflow';
+import { positionNodes, validateWorkflow, validateNodeParameters, validateNodeInputs, validateOutputReferences, normalizeTriggerSimpleParam, correctOptionParameters, detectUnknownParameters, ensureExpressionPrefix, injectMissingCredentialBlocks, } from '../utils/workflow';
 import { resolveCredentials } from '../utils/credentialResolver';
 import { N8N_CREDENTIAL_STORE_TYPE, N8N_CREDENTIAL_PROVIDER_TYPE, N8N_RUNTIME_CONTEXT_PROVIDER_TYPE, isCredentialProvider, isRuntimeContextProvider, UnsupportedIntegrationError, } from '../types/index';
 export const N8N_WORKFLOW_SERVICE_TYPE = 'n8n_workflow';
@@ -162,6 +162,12 @@ export class N8nWorkflowService extends Service {
         const runtimeContext = await this.fetchRuntimeContext(finalNodeDefs, 'local');
         let workflow = await generateWorkflow(this.runtime, prompt, finalNodeDefs, runtimeContext);
         logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Generated workflow with ${workflow.nodes?.length || 0} nodes`);
+        // Safety net: deterministically attach missing credential blocks
+        // (LLM sometimes drops them despite the MANDATORY INVARIANT rule).
+        const injectedCreds = injectMissingCredentialBlocks(workflow, finalNodeDefs, runtimeContext);
+        if (injectedCreds > 0) {
+            logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Injected ${injectedCreds} missing credentials block(s) (LLM omitted)`);
+        }
         normalizeTriggerSimpleParam(workflow);
         const optionFixes = correctOptionParameters(workflow);
         if (optionFixes > 0) {
@@ -212,6 +218,11 @@ export class N8nWorkflowService extends Service {
         logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Modify context: ${existingDefs.length} existing + ${newDefs.length} searched → ${combinedDefs.length} unique node defs`);
         const runtimeContext = await this.fetchRuntimeContext(combinedDefs, 'local');
         let workflow = await modifyWorkflow(this.runtime, existingWorkflow, modificationRequest, combinedDefs, runtimeContext);
+        // Same safety-net injection on modify regenerations.
+        const injectedCreds = injectMissingCredentialBlocks(workflow, combinedDefs, runtimeContext);
+        if (injectedCreds > 0) {
+            logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Injected ${injectedCreds} missing credentials block(s) on modify (LLM omitted)`);
+        }
         normalizeTriggerSimpleParam(workflow);
         const optionFixes = correctOptionParameters(workflow);
         if (optionFixes > 0) {
