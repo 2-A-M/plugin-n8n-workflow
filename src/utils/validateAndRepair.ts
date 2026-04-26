@@ -189,9 +189,19 @@ function buildUpstreamMap(workflow: N8nWorkflow): Map<string, string[]> {
 }
 
 /** Collect known top-level field names for a node's output. Returns null if
- *  unknown (e.g. Code/Function — arbitrary user output). */
+ *  unknown (e.g. Code/Function — arbitrary user output).
+ *
+ *  Synthetic / parameter-aware schemas check FIRST. The static schemaIndex
+ *  catches a single canonical shape per (node, resource, operation) but
+ *  ignores parameter switches like Gmail's `simple: true` that change
+ *  the runtime field set. The override layer (inferSyntheticOutputSchema)
+ *  reflects the actual runtime emission, so it must win when present. */
 function knownOutputFieldsForNode(node: N8nNode): string[] | null {
-  // 1. Check static output-schema catalog (Gmail/Slack/Discord etc.)
+  // 1. Synthetic / parameter-aware schemas (Summarize, Set, Gmail simple-mode)
+  const synthetic = inferSyntheticOutputSchema(node);
+  if (synthetic !== null) return synthetic;
+
+  // 2. Static output-schema catalog (Gmail non-simple, Slack, Discord etc.)
   if (typeof node.parameters?.resource === 'string' && typeof node.parameters?.operation === 'string') {
     const schema = loadOutputSchema(
       node.type,
@@ -201,14 +211,13 @@ function knownOutputFieldsForNode(node: N8nNode): string[] | null {
     if (schema) return schema.fields;
   }
 
-  // 2. Trigger schemas (gmailTrigger, etc.) — respect simple flag
+  // 3. Trigger schemas (gmailTrigger, etc.) — respect simple flag
   if (node.type.toLowerCase().includes('trigger')) {
     const triggerSchema = loadTriggerOutputSchema(node.type, node.parameters);
     if (triggerSchema) return triggerSchema.fields;
   }
 
-  // 3. Synthetic schemas for Summarize, Set, etc. (Code/Function return null)
-  return inferSyntheticOutputSchema(node);
+  return null;
 }
 
 /** For each parameter expression `{{ $json.X }}` (or `$node["Y"].json.X`),
