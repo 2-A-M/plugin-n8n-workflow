@@ -326,8 +326,17 @@ export class N8nWorkflowService extends Service {
     // an error can't be auto-fixed deterministically, fixWorkflowErrors
     // sends a surgical fix prompt to the LLM. Cap at 3 retries to bound
     // worst-case cost.
+    //
+    // Fetch the live n8n runtime's node-type registry once per deploy so
+    // typeVersion clamping intersects catalog ∩ runtime — necessary
+    // because the bundled `defaultNodes.json` can be ahead of the user's
+    // actually-installed n8n binary (e.g. catalog says Gmail v2.2 but
+    // runtime only ships up to v2.1).
+    const generateClient = this.getClient();
+    const runtimeVersions =
+      (await generateClient.getRuntimeNodeTypeVersions()) ?? undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const repairResult = validateAndRepair(workflow, finalNodeDefs, runtimeContext);
+      const repairResult = validateAndRepair(workflow, finalNodeDefs, runtimeContext, runtimeVersions);
       workflow = repairResult.workflow;
       if (repairResult.errors.length === 0) break;
       if (attempt === 2) {
@@ -475,9 +484,13 @@ export class N8nWorkflowService extends Service {
     // Layer 1+3 (Session 21): mirror the validate-and-repair retry loop on
     // the modify path. Modifications can drift in the same ways generations
     // do (typeVersion hallucination, missing authentication, etc.) so the
-    // gate must run here too.
+    // gate must run here too. Same runtime-version intersect as the
+    // generate path — fetch once, reuse across all 3 retry attempts.
+    const modifyClient = this.getClient();
+    const runtimeVersionsForModify =
+      (await modifyClient.getRuntimeNodeTypeVersions()) ?? undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const repairResult = validateAndRepair(workflow, combinedDefs, runtimeContext);
+      const repairResult = validateAndRepair(workflow, combinedDefs, runtimeContext, runtimeVersionsForModify);
       workflow = repairResult.workflow;
       if (repairResult.errors.length === 0) break;
       if (attempt === 2) {
