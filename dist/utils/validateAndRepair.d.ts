@@ -16,7 +16,7 @@
  * Mutates the workflow in place AND returns it for ergonomic chaining.
  */
 import type { N8nWorkflow, NodeDefinition, RuntimeContext } from '../types/index';
-export type RepairKind = 'typeVersionClamp' | 'authenticationBackfill' | 'fieldNameCaseFix' | 'nodeNameDeduplication' | 'droppedDanglingEdge';
+export type RepairKind = 'typeVersionClamp' | 'authenticationBackfill' | 'fieldNameCaseFix' | 'aggregationSourceFieldCaseFix' | 'nodeNameDeduplication' | 'droppedDanglingEdge';
 export type ValidationErrorKind = 'unknownOutputField' | 'requiredParameterMissing';
 export interface Repair {
     kind: RepairKind;

@@ -279,6 +279,90 @@ describe('validateAndRepair — output-field reference', () => {
     expect(sendValue).not.toContain('concatenated_subject');
   });
 
+  test('catches bracket-notation expression {{ $json["X"] }} (not just dot notation)', () => {
+    const summarizeDef = makeNodeDef({ name: 'n8n-nodes-base.summarize' });
+    const setDef = makeNodeDef({ name: 'n8n-nodes-base.set' });
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          name: 'Summarize',
+          type: 'n8n-nodes-base.summarize',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: {
+            fieldsToSummarize: { values: [{ aggregation: 'concatenate', field: 'Subject' }] },
+          },
+        },
+        {
+          name: 'Send',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 1,
+          position: [200, 0],
+          parameters: {
+            assignments: {
+              assignments: [
+                {
+                  name: 'msg',
+                  // Bracket notation (regression target — old regex missed this)
+                  value: '={{ $json["concatenated_subject"] }}',
+                },
+              ],
+            },
+          },
+        },
+      ],
+      connections: {
+        Summarize: { main: [[{ node: 'Send', type: 'main', index: 0 }]] },
+      },
+    });
+    const r = validateAndRepair(wf, [summarizeDef, setDef], NO_CTX);
+    const fixed = r.repairs.find((rep) => rep.kind === 'fieldNameCaseFix');
+    expect(fixed).toBeDefined();
+    const sendValue = ((wf.nodes[1].parameters as Record<string, unknown>)
+      .assignments as { assignments: Array<{ value: string }> }).assignments[0].value;
+    expect(sendValue).toContain('concatenated_Subject');
+  });
+
+  test('Summarize.fieldsToSummarize.values[].field case-corrects against upstream', () => {
+    // Synthetic schema for upstream "Source" Set node: emits "Subject" capital
+    const sourceDef = makeNodeDef({ name: 'n8n-nodes-base.set' });
+    const summarizeDef = makeNodeDef({ name: 'n8n-nodes-base.summarize' });
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          name: 'Source',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: {
+            assignments: {
+              assignments: [{ name: 'Subject', value: 'foo' }],
+            },
+          },
+        },
+        {
+          name: 'Summarize',
+          type: 'n8n-nodes-base.summarize',
+          typeVersion: 1,
+          position: [200, 0],
+          parameters: {
+            // Wrong case — should auto-correct to 'Subject'
+            fieldsToSummarize: { values: [{ aggregation: 'concatenate', field: 'subject' }] },
+          },
+        },
+      ],
+      connections: {
+        Source: { main: [[{ node: 'Summarize', type: 'main', index: 0 }]] },
+      },
+    });
+    const r = validateAndRepair(wf, [sourceDef, summarizeDef], NO_CTX);
+    const fixed = r.repairs.find((rep) => rep.kind === 'aggregationSourceFieldCaseFix');
+    expect(fixed).toBeDefined();
+    const fieldVal = ((wf.nodes[1].parameters as Record<string, unknown>)
+      .fieldsToSummarize as { values: Array<{ field: string }> }).values[0].field;
+    expect(fieldVal).toBe('Subject');
+  });
+
   test('flags unknown field as ValidationError (not auto-fixed)', () => {
     const summarizeDef = makeNodeDef({ name: 'n8n-nodes-base.summarize' });
     const setDef = makeNodeDef({ name: 'n8n-nodes-base.set' });

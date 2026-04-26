@@ -229,6 +229,71 @@ function rewriteInObject(obj, oldStr, newStr) {
         }
     }
 }
+// ─── Check 3b: aggregation-source-field validation ──────────────────────────
+/**
+ * Some nodes name an UPSTREAM field by its raw string identifier (not via an
+ * `{{ $json.X }}` expression). The Summarize node's
+ * `parameters.fieldsToSummarize.values[i].field` is the canonical example —
+ * it names a field in the upstream node's output. The LLM commonly emits
+ * the wrong case here (e.g. `field: "subject"` when Gmail simple-mode
+ * outputs `Subject`), and check #3's expression walker doesn't catch it
+ * because the value isn't an `{{ $json.X }}` expression at all. This check
+ * fills that gap deterministically: case-correct on CI match; flag as
+ * ValidationError otherwise.
+ *
+ * Closes the silent-empty-summary bug from Session 21 dogfood (Summarize
+ * concatenated 10 empty strings because the LLM picked lowercase
+ * `subject` against Gmail's actual `Subject` output).
+ */
+function applyAggregationSourceFieldFix(workflow, repairs, errors) {
+    const upstream = buildUpstreamMap(workflow);
+    const nodeByName = new Map();
+    for (const n of workflow.nodes)
+        nodeByName.set(n.name, n);
+    for (const node of workflow.nodes) {
+        if (node.type !== 'n8n-nodes-base.summarize')
+            continue;
+        const params = node.parameters;
+        const fts = params?.fieldsToSummarize;
+        const values = fts?.values;
+        if (!Array.isArray(values) || values.length === 0)
+            continue;
+        const parents = upstream.get(node.name) ?? [];
+        if (parents.length !== 1)
+            continue; // ambiguous → skip (don't false-error)
+        const sourceNode = nodeByName.get(parents[0]);
+        if (!sourceNode)
+            continue;
+        const fields = knownOutputFieldsForNode(sourceNode);
+        if (!fields)
+            continue; // unknowable schema → skip
+        for (const entry of values) {
+            if (typeof entry?.field !== 'string' || entry.field.length === 0)
+                continue;
+            if (fields.includes(entry.field))
+                continue; // exact match
+            const ciMatch = fields.find((f) => f.toLowerCase() === entry.field.toLowerCase());
+            if (ciMatch) {
+                const oldField = entry.field;
+                entry.field = ciMatch;
+                repairs.push({
+                    kind: 'aggregationSourceFieldCaseFix',
+                    node: node.name,
+                    detail: `fieldsToSummarize.values[].field "${oldField}" → "${ciMatch}" (matches ${sourceNode.name} output)`,
+                });
+            }
+            else {
+                errors.push({
+                    kind: 'unknownOutputField',
+                    node: node.name,
+                    detail: `fieldsToSummarize.values[].field "${entry.field}" does not match any known field on upstream ${sourceNode.name}`,
+                    expression: `field: "${entry.field}"`,
+                    availableFields: fields,
+                });
+            }
+        }
+    }
+}
 // ─── Check 4 ────────────────────────────────────────────────────────────────
 /** Push a clarification onto workflow._meta.requiresClarification when a
  *  required parameter is missing AND can't be inferred. Non-fatal. */
@@ -351,6 +416,10 @@ export function validateAndRepair(workflow, relevantNodes, _runtimeContext, runt
     deduplicateNodeNames(workflow, repairs);
     // Check 6: drop dangling edges before #3 walks the graph.
     dropDanglingEdges(workflow, repairs);
+    // Check 3b: aggregation-source-field case-fix BEFORE check 3, because
+    // correcting Summarize.field changes the synthetic output schema that
+    // check 3 uses when validating expressions downstream of Summarize.
+    applyAggregationSourceFieldFix(workflow, repairs, errors);
     // Check 3: output-field validation (after dedup so upstream lookup works)
     validateOutputFieldReferences(workflow, repairs, errors);
     // Check 4: required-parameter pre-flight (annotates workflow._meta only)
