@@ -76,6 +76,44 @@ function inferSetFields(node) {
     return null;
 }
 /**
+ * Gmail's `simple: true` mode flattens the response with PascalCase header
+ * fields (`Subject`, `From`, `To`, `Date`, ...) — distinct from the static
+ * schema in `schemaIndex.json` which captures the non-simple shape with
+ * lowercase `subject` etc. Without this override, validateAndRepair sees
+ * the static schema, decides `field: "subject"` is valid, and fails to
+ * catch the LLM's lowercase pick — Summarize then aggregates 10 empty
+ * strings at runtime because Gmail actually emits `Subject` capitalized.
+ *
+ * Verified during Session 20 dogfood: execution result data on a real
+ * Gmail node with `simple: true` had `[id, threadId, snippet, payload,
+ * sizeEstimate, historyId, internalDate, labels, Subject, From, To]`.
+ */
+const GMAIL_SIMPLE_MODE_FIELDS = [
+    'id',
+    'threadId',
+    'snippet',
+    'payload',
+    'sizeEstimate',
+    'historyId',
+    'internalDate',
+    'labels',
+    'Subject',
+    'From',
+    'To',
+    'Date',
+    'Cc',
+    'Bcc',
+    'Reply-To',
+];
+function inferGmailSimpleFields(node) {
+    const params = node.parameters;
+    // simple=true is the default in n8n's Gmail node. Treat both `true` and
+    // `undefined` as simple-mode unless explicitly disabled.
+    if (params?.simple === false)
+        return null;
+    return GMAIL_SIMPLE_MODE_FIELDS;
+}
+/**
  * Returns top-level output field names this node will emit, when derivable
  * from parameters alone. Returns `null` when the schema is unknowable
  * (Code, Function, AI Agent, custom) — callers should treat null as
@@ -88,6 +126,11 @@ export function inferSyntheticOutputSchema(node) {
         case 'n8n-nodes-base.set':
         case 'n8n-nodes-base.editFields':
             return inferSetFields(node);
+        case 'n8n-nodes-base.gmail':
+            // simple-mode override — only applies when simple !== false.
+            // For simple=false, return null so the caller falls back to the
+            // static schema (which captures the non-simple lowercase shape).
+            return inferGmailSimpleFields(node);
         // Arbitrary user output — schema unknowable without execution.
         case 'n8n-nodes-base.code':
         case 'n8n-nodes-base.function':

@@ -323,6 +323,44 @@ describe('validateAndRepair — output-field reference', () => {
     expect(sendValue).toContain('concatenated_Subject');
   });
 
+  test('Summarize.field "subject" case-corrects to "Subject" against Gmail simple-mode upstream', () => {
+    // Real S21 dogfood case: LLM picked field: "subject" lowercase but
+    // Gmail simple-mode runtime emits "Subject" capital. The static
+    // schemaIndex says lowercase "subject"; the simple-mode override
+    // layer must win so Layer 1 catches the case mismatch.
+    const gmailDef = makeNodeDef({ name: 'n8n-nodes-base.gmail' });
+    const summarizeDef = makeNodeDef({ name: 'n8n-nodes-base.summarize' });
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          name: 'Gmail',
+          type: 'n8n-nodes-base.gmail',
+          typeVersion: 2.1,
+          position: [0, 0],
+          parameters: { resource: 'message', operation: 'getAll', simple: true },
+        },
+        {
+          name: 'Summarize',
+          type: 'n8n-nodes-base.summarize',
+          typeVersion: 1,
+          position: [200, 0],
+          parameters: {
+            fieldsToSummarize: { values: [{ aggregation: 'concatenate', field: 'subject' }] },
+          },
+        },
+      ],
+      connections: {
+        Gmail: { main: [[{ node: 'Summarize', type: 'main', index: 0 }]] },
+      },
+    });
+    const r = validateAndRepair(wf, [gmailDef, summarizeDef], NO_CTX);
+    const fixed = r.repairs.find((rep) => rep.kind === 'aggregationSourceFieldCaseFix');
+    expect(fixed).toBeDefined();
+    const fieldVal = ((wf.nodes[1].parameters as Record<string, unknown>)
+      .fieldsToSummarize as { values: Array<{ field: string }> }).values[0].field;
+    expect(fieldVal).toBe('Subject');
+  });
+
   test('Summarize.fieldsToSummarize.values[].field case-corrects against upstream', () => {
     // Synthetic schema for upstream "Source" Set node: emits "Subject" capital
     const sourceDef = makeNodeDef({ name: 'n8n-nodes-base.set' });
