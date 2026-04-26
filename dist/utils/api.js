@@ -217,7 +217,14 @@ export class N8nApiClient {
             if (!response.ok)
                 return null;
             const data = (await response.json());
-            const out = new Map();
+            // n8n's `/types/nodes.json` lists ONE ENTRY PER VERSIONED-NODE CLASS,
+            // not one entry per node type. e.g. Gmail appears twice: once with
+            // `version: [2, 2.1]` (the modern class) and once with `version: 1`
+            // (the legacy class). We must MERGE versions across same-name
+            // entries; if we overwrote on each .set() we'd only retain the
+            // last entry's versions and clamp to that (a 2.2 → 1 false-floor
+            // regression, observed in Session 21 dogfood).
+            const acc = new Map();
             for (const entry of data) {
                 if (typeof entry?.name !== 'string')
                     continue;
@@ -226,10 +233,20 @@ export class N8nApiClient {
                     : typeof entry.version === 'number'
                         ? [entry.version]
                         : [];
-                if (versions.length > 0)
-                    out.set(entry.name, versions);
+                if (versions.length === 0)
+                    continue;
+                const set = acc.get(entry.name) ?? new Set();
+                for (const v of versions)
+                    set.add(v);
+                acc.set(entry.name, set);
             }
-            return out.size > 0 ? out : null;
+            if (acc.size === 0)
+                return null;
+            const out = new Map();
+            for (const [name, set] of acc) {
+                out.set(name, [...set].sort((a, b) => a - b));
+            }
+            return out;
         }
         catch {
             return null;
