@@ -24,6 +24,8 @@ import {
   injectMissingCredentialBlocks,
 } from '../utils/workflow';
 import { resolveCredentials } from '../utils/credentialResolver';
+import { validateAndRepair } from '../utils/validateAndRepair';
+import { fixWorkflowErrors } from '../utils/generation';
 import type {
   N8nWorkflow,
   N8nWorkflowResponse,
@@ -314,6 +316,46 @@ export class N8nWorkflowService extends Service {
       );
     }
 
+    // Layer 1+3 (Session 21): deterministic pre-deploy validation pass with
+    // bounded LLM-retry. Catches typeVersion hallucinations, missing
+    // parameters.authentication, output-field case mismatches (Subject vs
+    // subject), node-name collisions, and dangling connection edges. When
+    // an error can't be auto-fixed deterministically, fixWorkflowErrors
+    // sends a surgical fix prompt to the LLM. Cap at 3 retries to bound
+    // worst-case cost.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const repairResult = validateAndRepair(workflow, finalNodeDefs, runtimeContext);
+      workflow = repairResult.workflow;
+      if (repairResult.errors.length === 0) break;
+      if (attempt === 2) {
+        logger.warn(
+          { src: 'plugin:n8n-workflow:service:main', errors: repairResult.errors },
+          `validateAndRepair: ${repairResult.errors.length} unrecoverable error(s) after 3 retries — proceeding to deploy with _meta.errors`
+        );
+        workflow._meta = workflow._meta ?? {};
+        const errorLines = repairResult.errors.map(
+          (e) => `${e.node}: ${e.detail}${e.availableFields?.length ? ` (available: ${e.availableFields.join(', ')})` : ''}`
+        );
+        const existing = workflow._meta.requiresClarification ?? [];
+        workflow._meta.requiresClarification = [...existing, ...errorLines];
+        break;
+      }
+      try {
+        workflow = await fixWorkflowErrors(
+          this.runtime,
+          workflow,
+          repairResult.errors,
+          finalNodeDefs
+        );
+      } catch (err) {
+        logger.warn(
+          { src: 'plugin:n8n-workflow:service:main', err: err instanceof Error ? err.message : String(err) },
+          'fixWorkflowErrors threw — exiting retry loop'
+        );
+        break;
+      }
+    }
+
     normalizeTriggerSimpleParam(workflow);
 
     const optionFixes = correctOptionParameters(workflow);
@@ -424,6 +466,43 @@ export class N8nWorkflowService extends Service {
         { src: 'plugin:n8n-workflow:service:main' },
         `Injected ${injectedCreds} missing credentials block(s) on modify (LLM omitted)`
       );
+    }
+
+    // Layer 1+3 (Session 21): mirror the validate-and-repair retry loop on
+    // the modify path. Modifications can drift in the same ways generations
+    // do (typeVersion hallucination, missing authentication, etc.) so the
+    // gate must run here too.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const repairResult = validateAndRepair(workflow, combinedDefs, runtimeContext);
+      workflow = repairResult.workflow;
+      if (repairResult.errors.length === 0) break;
+      if (attempt === 2) {
+        logger.warn(
+          { src: 'plugin:n8n-workflow:service:main', errors: repairResult.errors },
+          `validateAndRepair (modify): ${repairResult.errors.length} unrecoverable error(s) after 3 retries`
+        );
+        workflow._meta = workflow._meta ?? {};
+        const errorLines = repairResult.errors.map(
+          (e) => `${e.node}: ${e.detail}${e.availableFields?.length ? ` (available: ${e.availableFields.join(', ')})` : ''}`
+        );
+        const existing = workflow._meta.requiresClarification ?? [];
+        workflow._meta.requiresClarification = [...existing, ...errorLines];
+        break;
+      }
+      try {
+        workflow = await fixWorkflowErrors(
+          this.runtime,
+          workflow,
+          repairResult.errors,
+          combinedDefs
+        );
+      } catch (err) {
+        logger.warn(
+          { src: 'plugin:n8n-workflow:service:main', err: err instanceof Error ? err.message : String(err) },
+          'fixWorkflowErrors (modify) threw — exiting retry loop'
+        );
+        break;
+      }
     }
 
     normalizeTriggerSimpleParam(workflow);

@@ -128,6 +128,51 @@ Pick \`<Friendly Name>\` to match what the user would see in n8n's UI: "Gmail Ac
 
 ---
 
+### 6a. **\`typeVersion\` selection — MANDATORY INVARIANT**
+
+Each node definition includes \`version: number[]\` listing the EXACT versions n8n knows about (e.g. \`[1, 2, 2.1]\` for Gmail). You MUST pick \`typeVersion\` from this array — pick the highest available value.
+
+**Hard rule:** never invent versions not in the array. If the array is \`[1, 2, 2.1]\`, do NOT emit \`2.2\`, \`2.3\`, or \`3\`. n8n's runtime cannot find a node implementation for a version you invent and the workflow crashes at activation with \`Cannot read properties of undefined (reading 'execute')\`.
+
+If a node definition lists \`version: [2]\` only, emit \`typeVersion: 2\`. If it lists \`version: [1, 2, 2.1]\`, emit \`typeVersion: 2.1\` (the highest).
+
+---
+
+### 6b. **\`parameters.authentication\` ↔ credentials coupling — MANDATORY INVARIANT**
+
+Some nodes (Gmail, Discord, etc.) gate which credential type applies based on \`parameters.authentication\`. Each such node's definition includes a \`credentialAuthMatrix\` mapping credType to the required authentication value, e.g.:
+
+\`\`\`json
+"credentialAuthMatrix": {
+  "gmailOAuth2": "oAuth2",
+  "googleApi": "serviceAccount"
+}
+\`\`\`
+
+**Hard rule:** when you attach a \`credentials\` block of type X, set \`parameters.authentication\` to the matching value from \`credentialAuthMatrix\`. Mismatched (or missing) \`authentication\` values mean n8n cannot bind the credential at activation time and the workflow crashes the same way as a missing typeVersion.
+
+Example — attaching \`gmailOAuth2\` credentials to a Gmail node:
+
+\`\`\`json
+{
+  "name": "Get Gmail Messages",
+  "type": "n8n-nodes-base.gmail",
+  "typeVersion": 2.1,
+  "parameters": {
+    "authentication": "oAuth2",
+    "resource": "message",
+    "operation": "getAll"
+  },
+  "credentials": {
+    "gmailOAuth2": { "id": "{{CREDENTIAL_ID}}", "name": "Gmail Account" }
+  }
+}
+\`\`\`
+
+If a node has no \`credentialAuthMatrix\` field, no \`authentication\` parameter is required.
+
+---
+
 ### 7. **Workflow Settings (optional)**
 
 Workflow-level settings, e.g. timezone, error workflow, execution options.

@@ -130,6 +130,65 @@ ${userMessage}`,
     }
     return result;
 }
+/**
+ * Layer 3 retry helper (Session 21). When `validateAndRepair` flags errors
+ * it can't auto-fix deterministically (e.g. truly unknown output field),
+ * send a surgical fix prompt to the LLM listing only the failing items
+ * and re-validate. The caller wraps this in a 3-attempt loop.
+ *
+ * Lives next to `correctFieldReferences` and `correctParameterNames` —
+ * those are still the preferred specific-class corrections. This is the
+ * generic backstop for any remaining error class.
+ */
+export async function fixWorkflowErrors(runtime, workflow, errors, relevantNodes) {
+    if (errors.length === 0)
+        return workflow;
+    const errorBlock = errors
+        .map((e, i) => {
+        const av = e.availableFields?.length
+            ? ` Available fields on the upstream node: ${e.availableFields.join(', ')}.`
+            : '';
+        const expr = e.expression ? ` Expression: \`${e.expression}\`.` : '';
+        return `${i + 1}. Node "${e.node}" — ${e.detail}.${expr}${av}`;
+    })
+        .join('\n');
+    const simplifiedNodes = relevantNodes.map(simplifyNodeForLLM);
+    const fixPrompt = `You are fixing a deterministic-validator-flagged n8n workflow. Apply ONLY the listed fixes — do not refactor anything else.
+
+## Errors to fix
+
+${errorBlock}
+
+## Available node definitions (for reference)
+
+${JSON.stringify(simplifiedNodes, null, 2)}
+
+## Current workflow JSON
+
+${JSON.stringify(workflow, null, 2)}
+
+Return the COMPLETE corrected workflow JSON. Preserve every field that was not part of the error list. Only change what is required to fix the listed items.`;
+    let response;
+    try {
+        response = (await runtime.useModel(ModelType.TEXT_LARGE, {
+            prompt: fixPrompt,
+            temperature: 0,
+            responseFormat: { type: 'json_object' },
+        }));
+    }
+    catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error({ src: 'plugin:n8n-workflow:generation:fixErrors', err: errMsg }, `fixWorkflowErrors LLM call failed: ${errMsg}`);
+        throw err;
+    }
+    try {
+        return parseWorkflowResponse(response);
+    }
+    catch (err) {
+        logger.error({ src: 'plugin:n8n-workflow:generation:fixErrors' }, `fixWorkflowErrors response could not be parsed; keeping original workflow`);
+        return workflow;
+    }
+}
 function parseWorkflowResponse(response) {
     // Strip markdown code fences (handles ```json, ```, with any whitespace/newlines)
     const cleaned = response

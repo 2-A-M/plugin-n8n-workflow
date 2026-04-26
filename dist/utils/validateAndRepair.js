@@ -1,0 +1,343 @@
+/**
+ * Deterministic pre-deploy pass that catches catalog-drift hallucinations
+ * the LLM emits despite prompt hardening. Runs after `injectMissingCredentialBlocks`
+ * (Session 19 safety net) and before `deployWorkflow`.
+ *
+ * Six checks, each emitting a `Repair` (auto-fixed) or `ValidationError`
+ * (handed off to the retry loop in n8n-workflow-service.ts):
+ *
+ *   1. typeVersion clamp           — closes "LLM emits 2.2 when only 1, 2, 2.1 exist"
+ *   2. authentication back-fill    — closes "credentials attached but parameters.authentication missing"
+ *   3. output-field validation     — closes "subject vs Subject" + typo classes
+ *   4. required-parameter pre-flight
+ *   5. node-name uniqueness        — n8n rejects duplicates with confusing errors
+ *   6. connection sanity           — drop edges to non-existent nodes
+ *
+ * Mutates the workflow in place AND returns it for ergonomic chaining.
+ */
+import { logger } from '@elizaos/core';
+import { loadOutputSchema, loadTriggerOutputSchema, parseExpressions, } from './outputSchema';
+import { inferSyntheticOutputSchema } from './inferSyntheticOutputSchema';
+const LOG_SRC = 'plugin:n8n-workflow:utils:validate';
+// ─── Check 1 ────────────────────────────────────────────────────────────────
+/** Pick the closest-but-not-greater valid version. Falls back to the maximum
+ *  when all valid versions are smaller than the requested one (LLM picked
+ *  a higher number — clamp down). */
+function clampTypeVersion(requested, validVersions) {
+    if (validVersions.length === 0)
+        return null;
+    const sorted = [...validVersions].sort((a, b) => a - b);
+    if (sorted.includes(requested))
+        return null; // already valid
+    // Highest version ≤ requested, else highest available.
+    const candidates = sorted.filter((v) => v <= requested);
+    return candidates.length > 0 ? candidates[candidates.length - 1] : sorted[sorted.length - 1];
+}
+function applyTypeVersionClamp(node, def, repairs) {
+    const versions = Array.isArray(def.version) ? def.version : [def.version];
+    const numericVersions = versions.filter((v) => typeof v === 'number');
+    if (numericVersions.length === 0)
+        return;
+    const clamped = clampTypeVersion(node.typeVersion, numericVersions);
+    if (clamped === null)
+        return;
+    repairs.push({
+        kind: 'typeVersionClamp',
+        node: node.name,
+        detail: `${node.type} typeVersion ${node.typeVersion} → ${clamped} (valid: ${numericVersions.join(', ')})`,
+    });
+    node.typeVersion = clamped;
+}
+/** When a credentials block is attached and the cred type's catalog entry
+ *  shows it gates on a single authentication value (and node.parameters
+ *  doesn't already set one), back-fill it. Closes the Gmail-missing-auth
+ *  bug surfaced in Session 20 dogfood. */
+function applyAuthenticationBackfill(node, def, repairs) {
+    if (!node.credentials)
+        return;
+    const attachedTypes = Object.keys(node.credentials);
+    if (attachedTypes.length !== 1)
+        return; // ambiguous → leave alone
+    const [credType] = attachedTypes;
+    const defCreds = (def.credentials ?? []);
+    const credDef = defCreds.find((c) => c.name === credType);
+    if (!credDef)
+        return;
+    const authOpts = credDef.displayOptions?.show?.authentication;
+    if (!authOpts || authOpts.length !== 1)
+        return;
+    const requiredAuth = authOpts[0];
+    const params = (node.parameters ?? {});
+    if (typeof params.authentication === 'string' && params.authentication.length > 0) {
+        return; // LLM already set it
+    }
+    node.parameters = { ...params, authentication: requiredAuth };
+    repairs.push({
+        kind: 'authenticationBackfill',
+        node: node.name,
+        detail: `set parameters.authentication="${requiredAuth}" to match attached ${credType}`,
+    });
+}
+// ─── Check 3 ────────────────────────────────────────────────────────────────
+/** Build name → node map for upstream-graph walk. */
+function buildUpstreamMap(workflow) {
+    const upstream = new Map();
+    for (const fromName of Object.keys(workflow.connections ?? {})) {
+        const outputs = workflow.connections[fromName];
+        for (const outputType of Object.keys(outputs)) {
+            const branches = outputs[outputType];
+            for (const branch of branches) {
+                for (const edge of branch) {
+                    const arr = upstream.get(edge.node) ?? [];
+                    arr.push(fromName);
+                    upstream.set(edge.node, arr);
+                }
+            }
+        }
+    }
+    return upstream;
+}
+/** Collect known top-level field names for a node's output. Returns null if
+ *  unknown (e.g. Code/Function — arbitrary user output). */
+function knownOutputFieldsForNode(node) {
+    // 1. Check static output-schema catalog (Gmail/Slack/Discord etc.)
+    if (typeof node.parameters?.resource === 'string' && typeof node.parameters?.operation === 'string') {
+        const schema = loadOutputSchema(node.type, node.parameters.resource, node.parameters.operation);
+        if (schema)
+            return schema.fields;
+    }
+    // 2. Trigger schemas (gmailTrigger, etc.) — respect simple flag
+    if (node.type.toLowerCase().includes('trigger')) {
+        const triggerSchema = loadTriggerOutputSchema(node.type, node.parameters);
+        if (triggerSchema)
+            return triggerSchema.fields;
+    }
+    // 3. Synthetic schemas for Summarize, Set, etc. (Code/Function return null)
+    return inferSyntheticOutputSchema(node);
+}
+/** For each parameter expression `{{ $json.X }}` (or `$node["Y"].json.X`),
+ *  validate X against the upstream node's known fields. Auto-fix case
+ *  mismatches; flag unknown fields as ValidationErrors for retry. */
+function validateOutputFieldReferences(workflow, repairs, errors) {
+    const upstream = buildUpstreamMap(workflow);
+    const nodeByName = new Map();
+    for (const n of workflow.nodes)
+        nodeByName.set(n.name, n);
+    for (const node of workflow.nodes) {
+        if (!node.parameters || typeof node.parameters !== 'object')
+            continue;
+        const refs = parseExpressions(node.parameters);
+        if (refs.length === 0)
+            continue;
+        for (const ref of refs) {
+            // Determine which upstream node's output this reference reads from.
+            let sourceNode = null;
+            if (ref.sourceNodeName) {
+                sourceNode = nodeByName.get(ref.sourceNodeName) ?? null;
+            }
+            else {
+                // `{{ $json.X }}` → first immediate upstream node
+                const parents = upstream.get(node.name) ?? [];
+                if (parents.length === 1) {
+                    sourceNode = nodeByName.get(parents[0]) ?? null;
+                }
+                else if (parents.length > 1) {
+                    // Ambiguous — skip silently rather than false-error
+                    continue;
+                }
+            }
+            if (!sourceNode)
+                continue;
+            const fields = knownOutputFieldsForNode(sourceNode);
+            if (!fields)
+                continue; // unknowable schema → skip
+            const topField = ref.path[0];
+            if (!topField)
+                continue;
+            if (fields.includes(topField))
+                continue; // exact match
+            // Case-insensitive deterministic correction
+            const ciMatch = fields.find((f) => f.toLowerCase() === topField.toLowerCase());
+            if (ciMatch) {
+                rewriteParameterFieldRef(node, ref.fullExpression, topField, ciMatch);
+                repairs.push({
+                    kind: 'fieldNameCaseFix',
+                    node: node.name,
+                    detail: `${ref.fullExpression}: "${topField}" → "${ciMatch}" (matches ${sourceNode.name} output)`,
+                });
+            }
+            else {
+                errors.push({
+                    kind: 'unknownOutputField',
+                    node: node.name,
+                    detail: `expression references unknown field "${topField}" on upstream node ${sourceNode.name}`,
+                    expression: ref.fullExpression,
+                    availableFields: fields,
+                });
+            }
+        }
+    }
+}
+/** Replace `oldField` with `newField` in node.parameters everywhere the
+ *  fullExpression pattern appears. */
+function rewriteParameterFieldRef(node, fullExpression, oldField, newField) {
+    const oldPattern = fullExpression;
+    const newPattern = fullExpression.replace(new RegExp(`\\b${oldField}\\b`), newField);
+    rewriteInObject(node.parameters, oldPattern, newPattern);
+}
+function rewriteInObject(obj, oldStr, newStr) {
+    for (const key of Object.keys(obj)) {
+        const val = obj[key];
+        if (typeof val === 'string' && val.includes(oldStr)) {
+            obj[key] = val.replaceAll(oldStr, newStr);
+        }
+        else if (Array.isArray(val)) {
+            for (let i = 0; i < val.length; i++) {
+                if (typeof val[i] === 'string' && val[i].includes(oldStr)) {
+                    val[i] = val[i].replaceAll(oldStr, newStr);
+                }
+                else if (typeof val[i] === 'object' && val[i] !== null) {
+                    rewriteInObject(val[i], oldStr, newStr);
+                }
+            }
+        }
+        else if (typeof val === 'object' && val !== null) {
+            rewriteInObject(val, oldStr, newStr);
+        }
+    }
+}
+// ─── Check 4 ────────────────────────────────────────────────────────────────
+/** Push a clarification onto workflow._meta.requiresClarification when a
+ *  required parameter is missing AND can't be inferred. Non-fatal. */
+function applyRequiredParameterPreflight(workflow, defByType) {
+    const clarifications = [];
+    for (const node of workflow.nodes) {
+        const def = defByType.get(node.type);
+        if (!def)
+            continue;
+        for (const prop of def.properties ?? []) {
+            if (!prop.required)
+                continue;
+            const params = (node.parameters ?? {});
+            if (params[prop.name] === undefined || params[prop.name] === '') {
+                clarifications.push(`${node.name} (${node.type}) is missing required parameter "${prop.name}" — please provide this value or clarify your requirements`);
+            }
+        }
+    }
+    if (clarifications.length === 0)
+        return;
+    workflow._meta = workflow._meta ?? {};
+    const existing = workflow._meta.requiresClarification ?? [];
+    // Avoid duplicate-suffix clutter from prior catalog passes.
+    const SUFFIX = '— please provide this value or clarify your requirements';
+    const nonCatalog = existing.filter((c) => !c.endsWith(SUFFIX));
+    workflow._meta.requiresClarification = [...nonCatalog, ...clarifications];
+}
+// ─── Check 5 ────────────────────────────────────────────────────────────────
+function deduplicateNodeNames(workflow, repairs) {
+    const seen = new Map();
+    for (const node of workflow.nodes) {
+        const count = seen.get(node.name) ?? 0;
+        if (count > 0) {
+            const oldName = node.name;
+            let suffix = count + 1;
+            let candidate = `${oldName} (${suffix})`;
+            while (seen.has(candidate)) {
+                suffix++;
+                candidate = `${oldName} (${suffix})`;
+            }
+            node.name = candidate;
+            seen.set(candidate, 1);
+            seen.set(oldName, count + 1);
+            repairs.push({
+                kind: 'nodeNameDeduplication',
+                node: candidate,
+                detail: `renamed duplicate "${oldName}" → "${candidate}"`,
+            });
+            // Update connections referencing the old name? The original was first
+            // — connections pointing at oldName still resolve to the original.
+            // Rewrite outgoing connections key on duplicate node.
+            if (workflow.connections?.[oldName]) {
+                // Outgoing connections for the duplicate: move under new name only
+                // when the original doesn't already own them. Heuristic: if both
+                // the dup and original happen to share outgoing edges, leave as-is
+                // (the original wins). Most LLM-generated dupes have no outgoing
+                // edges, so this rarely fires.
+            }
+        }
+        else {
+            seen.set(node.name, 1);
+        }
+    }
+}
+// ─── Check 6 ────────────────────────────────────────────────────────────────
+function dropDanglingEdges(workflow, repairs) {
+    if (!workflow.connections)
+        return;
+    const nodeNames = new Set(workflow.nodes.map((n) => n.name));
+    for (const fromName of Object.keys(workflow.connections)) {
+        const outputs = workflow.connections[fromName];
+        if (!nodeNames.has(fromName)) {
+            // Source node doesn't exist — drop the entire entry.
+            delete workflow.connections[fromName];
+            repairs.push({
+                kind: 'droppedDanglingEdge',
+                node: fromName,
+                detail: `dropped connections entry for non-existent node`,
+            });
+            continue;
+        }
+        for (const outputType of Object.keys(outputs)) {
+            const branches = outputs[outputType];
+            for (let i = 0; i < branches.length; i++) {
+                const branch = branches[i];
+                const filtered = branch.filter((edge) => nodeNames.has(edge.node));
+                if (filtered.length !== branch.length) {
+                    const dropped = branch.filter((e) => !nodeNames.has(e.node));
+                    for (const e of dropped) {
+                        repairs.push({
+                            kind: 'droppedDanglingEdge',
+                            node: fromName,
+                            detail: `dropped edge ${fromName} → ${e.node} (target missing)`,
+                        });
+                    }
+                    branches[i] = filtered;
+                }
+            }
+        }
+    }
+}
+// ─── Public API ─────────────────────────────────────────────────────────────
+export function validateAndRepair(workflow, relevantNodes, _runtimeContext) {
+    const repairs = [];
+    const errors = [];
+    if (!workflow?.nodes || !Array.isArray(workflow.nodes)) {
+        return { workflow, repairs, errors };
+    }
+    const defByType = new Map(relevantNodes.map((d) => [d.name, d]));
+    // Check 1 + 2: per-node passes
+    for (const node of workflow.nodes) {
+        const def = defByType.get(node.type);
+        if (def) {
+            applyTypeVersionClamp(node, def, repairs);
+            applyAuthenticationBackfill(node, def, repairs);
+        }
+    }
+    // Check 5: dedup BEFORE field-ref + connection passes (so the upstream map
+    // is built against the final names).
+    deduplicateNodeNames(workflow, repairs);
+    // Check 6: drop dangling edges before #3 walks the graph.
+    dropDanglingEdges(workflow, repairs);
+    // Check 3: output-field validation (after dedup so upstream lookup works)
+    validateOutputFieldReferences(workflow, repairs, errors);
+    // Check 4: required-parameter pre-flight (annotates workflow._meta only)
+    applyRequiredParameterPreflight(workflow, defByType);
+    if (repairs.length > 0) {
+        logger.info({ src: LOG_SRC, repairCount: repairs.length, repairs }, `validateAndRepair applied ${repairs.length} fix(es)`);
+    }
+    if (errors.length > 0) {
+        logger.warn({ src: LOG_SRC, errorCount: errors.length, errors }, `validateAndRepair flagged ${errors.length} unrecoverable error(s) for retry loop`);
+    }
+    return { workflow, repairs, errors };
+}
+//# sourceMappingURL=validateAndRepair.js.map

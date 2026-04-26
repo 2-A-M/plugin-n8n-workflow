@@ -159,6 +159,27 @@ function simplifyProperty(prop) {
     }
     return slim;
 }
+/**
+ * Derive a `{ credType: requiredAuthValue }` map from a node's catalog
+ * credential entries. So Gmail's catalog produces
+ * `{ gmailOAuth2: "oAuth2", googleApi: "serviceAccount" }`. The LLM uses
+ * this to set `parameters.authentication` correctly when attaching a
+ * credentials block (Session 21 anti-hallucination Layer 2).
+ *
+ * Returns undefined when no credential entries gate on `authentication`.
+ */
+function buildCredentialAuthMatrix(node) {
+    if (!node.credentials?.length)
+        return undefined;
+    const out = {};
+    for (const cred of node.credentials) {
+        const authValues = cred.displayOptions?.show?.authentication;
+        if (Array.isArray(authValues) && authValues.length === 1) {
+            out[cred.name] = authValues[0];
+        }
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+}
 export function simplifyNodeForLLM(node) {
     const cleaned = node.properties
         .map(simplifyProperty)
@@ -172,6 +193,22 @@ export function simplifyNodeForLLM(node) {
         seen.add(prop.name);
         deduped.push(prop);
     }
-    return { ...node, properties: deduped };
+    // Layer 2 (Session 21): always emit `version` as an array so the LLM
+    // sees the EXACT set of valid values (catches typeVersion hallucinations
+    // like 2.2 when only [1, 2, 2.1] exist). Pair with the prompt rule
+    // "pick the highest from version[]; never invent versions".
+    const versions = Array.isArray(node.version)
+        ? [...node.version]
+        : [node.version];
+    // Layer 2 (Session 21): expose the credential→authentication mapping
+    // so the LLM sets `parameters.authentication` correctly when it
+    // attaches a credentials block.
+    const credentialAuthMatrix = buildCredentialAuthMatrix(node);
+    return {
+        ...node,
+        version: versions,
+        properties: deduped,
+        ...(credentialAuthMatrix ? { credentialAuthMatrix } : {}),
+    };
 }
 //# sourceMappingURL=catalog.js.map
