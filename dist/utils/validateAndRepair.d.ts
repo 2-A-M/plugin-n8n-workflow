@@ -37,5 +37,5 @@ export interface RepairResult {
     repairs: Repair[];
     errors: ValidationError[];
 }
-export declare function validateAndRepair(workflow: N8nWorkflow, relevantNodes: NodeDefinition[], _runtimeContext: RuntimeContext | undefined): RepairResult;
+export declare function validateAndRepair(workflow: N8nWorkflow, relevantNodes: NodeDefinition[], _runtimeContext: RuntimeContext | undefined, runtimeVersions?: Map<string, number[]>): RepairResult;
 //# sourceMappingURL=validateAndRepair.d.ts.map

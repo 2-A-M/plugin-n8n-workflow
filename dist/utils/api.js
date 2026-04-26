@@ -199,6 +199,42 @@ export class N8nApiClient {
             throw error;
         }
     }
+    /**
+     * Fetch the n8n runtime's actual node-type registry (NOT under /api/v1 —
+     * served at /types/nodes.json). Used by Session 21 validateAndRepair to
+     * intersect the static plugin catalog with what the user's n8n binary
+     * actually ships, so the LLM can't pick a typeVersion that exists in
+     * the catalog but not in the running n8n.
+     *
+     * Returns `null` on any failure — callers should fall back to the
+     * static catalog versions.
+     */
+    async getRuntimeNodeTypeVersions() {
+        try {
+            const response = await fetch(`${this.baseUrl}/types/nodes.json`, {
+                headers: { 'X-N8N-API-KEY': this.apiKey },
+            });
+            if (!response.ok)
+                return null;
+            const data = (await response.json());
+            const out = new Map();
+            for (const entry of data) {
+                if (typeof entry?.name !== 'string')
+                    continue;
+                const versions = Array.isArray(entry.version)
+                    ? entry.version.filter((v) => typeof v === 'number')
+                    : typeof entry.version === 'number'
+                        ? [entry.version]
+                        : [];
+                if (versions.length > 0)
+                    out.set(entry.name, versions);
+            }
+            return out.size > 0 ? out : null;
+        }
+        catch {
+            return null;
+        }
+    }
     // ============================================================================
     // INTERNAL HELPERS
     // ============================================================================

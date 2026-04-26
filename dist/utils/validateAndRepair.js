@@ -33,18 +33,41 @@ function clampTypeVersion(requested, validVersions) {
     const candidates = sorted.filter((v) => v <= requested);
     return candidates.length > 0 ? candidates[candidates.length - 1] : sorted[sorted.length - 1];
 }
-function applyTypeVersionClamp(node, def, repairs) {
-    const versions = Array.isArray(def.version) ? def.version : [def.version];
-    const numericVersions = versions.filter((v) => typeof v === 'number');
-    if (numericVersions.length === 0)
+function applyTypeVersionClamp(node, def, repairs, runtimeVersions) {
+    const catalogVersions = Array.isArray(def.version) ? def.version : [def.version];
+    const catalogNumeric = catalogVersions.filter((v) => typeof v === 'number');
+    // When the live n8n runtime registry is available, intersect with it.
+    // The static plugin catalog is sometimes ahead of the user's running
+    // n8n binary (e.g. catalog claims Gmail v2.2 but runtime only has up
+    // to v2.1) — without this intersect, the LLM picks a version n8n
+    // can't instantiate and activation crashes with `Cannot read
+    // properties of undefined (reading 'execute')`.
+    const runtime = runtimeVersions?.get(node.type);
+    let validVersions;
+    if (runtime && runtime.length > 0) {
+        if (catalogNumeric.length > 0) {
+            const runtimeSet = new Set(runtime);
+            validVersions = catalogNumeric.filter((v) => runtimeSet.has(v));
+            if (validVersions.length === 0)
+                validVersions = runtime; // catalog drift — trust runtime
+        }
+        else {
+            validVersions = runtime;
+        }
+    }
+    else {
+        validVersions = catalogNumeric;
+    }
+    if (validVersions.length === 0)
         return;
-    const clamped = clampTypeVersion(node.typeVersion, numericVersions);
+    const clamped = clampTypeVersion(node.typeVersion, validVersions);
     if (clamped === null)
         return;
+    const source = runtime ? 'runtime∩catalog' : 'catalog';
     repairs.push({
         kind: 'typeVersionClamp',
         node: node.name,
-        detail: `${node.type} typeVersion ${node.typeVersion} → ${clamped} (valid: ${numericVersions.join(', ')})`,
+        detail: `${node.type} typeVersion ${node.typeVersion} → ${clamped} (${source} valid: ${validVersions.join(', ')})`,
     });
     node.typeVersion = clamped;
 }
@@ -308,7 +331,7 @@ function dropDanglingEdges(workflow, repairs) {
     }
 }
 // ─── Public API ─────────────────────────────────────────────────────────────
-export function validateAndRepair(workflow, relevantNodes, _runtimeContext) {
+export function validateAndRepair(workflow, relevantNodes, _runtimeContext, runtimeVersions) {
     const repairs = [];
     const errors = [];
     if (!workflow?.nodes || !Array.isArray(workflow.nodes)) {
@@ -319,7 +342,7 @@ export function validateAndRepair(workflow, relevantNodes, _runtimeContext) {
     for (const node of workflow.nodes) {
         const def = defByType.get(node.type);
         if (def) {
-            applyTypeVersionClamp(node, def, repairs);
+            applyTypeVersionClamp(node, def, repairs, runtimeVersions);
             applyAuthenticationBackfill(node, def, repairs);
         }
     }

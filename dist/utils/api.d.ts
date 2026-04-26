@@ -64,6 +64,17 @@ export declare class N8nApiClient {
      * Used for per-user workflow organization
      */
     getOrCreateTag(name: string): Promise<N8nTag>;
+    /**
+     * Fetch the n8n runtime's actual node-type registry (NOT under /api/v1 —
+     * served at /types/nodes.json). Used by Session 21 validateAndRepair to
+     * intersect the static plugin catalog with what the user's n8n binary
+     * actually ships, so the LLM can't pick a typeVersion that exists in
+     * the catalog but not in the running n8n.
+     *
+     * Returns `null` on any failure — callers should fall back to the
+     * static catalog versions.
+     */
+    getRuntimeNodeTypeVersions(): Promise<Map<string, number[]> | null>;
     private request;
 }
 //# sourceMappingURL=api.d.ts.map

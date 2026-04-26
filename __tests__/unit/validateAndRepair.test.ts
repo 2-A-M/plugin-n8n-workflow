@@ -89,6 +89,55 @@ describe('validateAndRepair — typeVersion clamp', () => {
     expect(r.repairs.filter((rep) => rep.kind === 'typeVersionClamp')).toHaveLength(0);
   });
 
+  test('runtime versions trump catalog when narrower (Gmail catalog [2,2.1,2.2] but runtime only [2,2.1])', () => {
+    // Real-world Session 21 dogfood case: bundled defaultNodes.json claims
+    // Gmail supports 2.2 but the user's actual n8n binary only ships up
+    // to 2.1. The clamp must use runtime ∩ catalog, not catalog alone.
+    const def = makeNodeDef({
+      name: 'n8n-nodes-base.gmail',
+      version: [2, 2.1, 2.2],
+    });
+    const wf = makeWorkflow({
+      nodes: [{
+        name: 'Gmail',
+        type: 'n8n-nodes-base.gmail',
+        typeVersion: 2.2,
+        position: [0, 0],
+        parameters: {},
+      }],
+    });
+    const runtimeVersions = new Map<string, number[]>([
+      ['n8n-nodes-base.gmail', [1, 2, 2.1]],
+    ]);
+    const r = validateAndRepair(wf, [def], NO_CTX, runtimeVersions);
+    expect(wf.nodes[0].typeVersion).toBe(2.1);
+    expect(r.repairs[0].kind).toBe('typeVersionClamp');
+    expect(r.repairs[0].detail).toContain('runtime∩catalog');
+  });
+
+  test('falls back to runtime versions when catalog and runtime do not intersect', () => {
+    const def = makeNodeDef({
+      name: 'n8n-nodes-base.gmail',
+      version: [3, 3.1],
+    });
+    const wf = makeWorkflow({
+      nodes: [{
+        name: 'Gmail',
+        type: 'n8n-nodes-base.gmail',
+        typeVersion: 3,
+        position: [0, 0],
+        parameters: {},
+      }],
+    });
+    const runtimeVersions = new Map<string, number[]>([
+      ['n8n-nodes-base.gmail', [1, 2, 2.1]],
+    ]);
+    const r = validateAndRepair(wf, [def], NO_CTX, runtimeVersions);
+    // No catalog ∩ runtime overlap — trust runtime, clamp to highest ≤ 3
+    expect(wf.nodes[0].typeVersion).toBe(2.1);
+    expect(r.repairs[0].kind).toBe('typeVersionClamp');
+  });
+
   test('clamps below-floor request to highest available (degenerate fallback)', () => {
     const def = makeNodeDef({ version: [2, 2.1] });
     const wf = makeWorkflow({
