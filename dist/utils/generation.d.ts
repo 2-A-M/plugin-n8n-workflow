@@ -1,7 +1,7 @@
 import { type IAgentRuntime } from '@elizaos/core';
 import { N8nWorkflow, WorkflowMatchResult, WorkflowDraft, DraftIntentResult, NodeDefinition, NodeSearchResult, FeasibilityResult, OutputRefValidation, RuntimeContext } from '../types/index';
 import type { UnknownParamDetection } from './workflow';
-export declare function extractKeywords(runtime: IAgentRuntime, userPrompt: string): Promise<string[]>;
+export declare function extractKeywords(runtime: IAgentRuntime, userPrompt: string, preferredProviders?: string[]): Promise<string[]>;
 export declare function matchWorkflow(runtime: IAgentRuntime, userRequest: string, workflows: N8nWorkflow[]): Promise<WorkflowMatchResult>;
 export declare function classifyDraftIntent(runtime: IAgentRuntime, userMessage: string, draft: WorkflowDraft): Promise<DraftIntentResult>;
 export declare function generateWorkflow(runtime: IAgentRuntime, userPrompt: string, relevantNodes: NodeDefinition[], runtimeContext?: RuntimeContext): Promise<N8nWorkflow>;

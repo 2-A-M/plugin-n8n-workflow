@@ -93,8 +93,11 @@ export class N8nWorkflowService extends Service {
     }
     /**
      * Query the optional `n8n_runtime_context_provider` service for runtime
-     * facts to inject into the workflow-generation prompt. Returns undefined
-     * when no provider is registered or the call throws.
+     * facts to inject into the workflow-generation prompt. The host (e.g. Milady)
+     * uses this to surface real Discord guild/channel IDs, the user's Gmail
+     * email, and which credential types it can resolve. Returns `undefined`
+     * when no provider is registered or the call throws — generation proceeds
+     * with the baseline prompt.
      */
     async fetchRuntimeContext(nodeDefs, userId) {
         const raw = this.runtime.getService(N8N_RUNTIME_CONTEXT_PROVIDER_TYPE);
@@ -122,8 +125,17 @@ export class N8nWorkflowService extends Service {
     }
     async generateWorkflowDraft(prompt) {
         logger.info({ src: 'plugin:n8n-workflow:service:main' }, 'Generating workflow draft from prompt');
-        const keywords = await extractKeywords(this.runtime, prompt);
-        logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Extracted keywords: ${keywords.join(', ')}`);
+        // Fetch host-supplied bias hints early (before keyword extraction) so the
+        // LLM is told which providers the host already knows it can satisfy.
+        // We pass empty `relevantNodes` / `relevantCredTypes` here because we do
+        // not yet have searchNodes results — `preferredProviders` is derived from
+        // the host's connector config alone (independent of node search). The
+        // full runtime context (with credentials + facts) is fetched again later
+        // once we have the filtered node list.
+        const earlyContext = await this.fetchRuntimeContext([], 'local');
+        const preferredProviders = earlyContext?.preferredProviders;
+        const keywords = await extractKeywords(this.runtime, prompt, preferredProviders);
+        logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Extracted keywords: ${keywords.join(', ')}${preferredProviders?.length ? ` (with bias: ${preferredProviders.join(', ')})` : ''}`);
         let relevantNodes = searchNodes(keywords, 15);
         logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Found ${relevantNodes.length} relevant nodes`);
         if (relevantNodes.length === 0) {
@@ -162,8 +174,11 @@ export class N8nWorkflowService extends Service {
         const runtimeContext = await this.fetchRuntimeContext(finalNodeDefs, 'local');
         let workflow = await generateWorkflow(this.runtime, prompt, finalNodeDefs, runtimeContext);
         logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Generated workflow with ${workflow.nodes?.length || 0} nodes`);
-        // Safety net: deterministically attach missing credential blocks
-        // (LLM sometimes drops them despite the MANDATORY INVARIANT rule).
+        // Safety net: even with the MANDATORY INVARIANT prompt rule, the LLM
+        // sometimes omits the `credentials` block on credentialed nodes. Inject
+        // it deterministically based on the node's catalog definition + the
+        // host's supported cred types so resolveCredentials can mint the
+        // credential server-side instead of falling back to a manual UI step.
         const injectedCreds = injectMissingCredentialBlocks(workflow, finalNodeDefs, runtimeContext);
         if (injectedCreds > 0) {
             logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Injected ${injectedCreds} missing credentials block(s) (LLM omitted)`);
@@ -218,7 +233,9 @@ export class N8nWorkflowService extends Service {
         logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Modify context: ${existingDefs.length} existing + ${newDefs.length} searched → ${combinedDefs.length} unique node defs`);
         const runtimeContext = await this.fetchRuntimeContext(combinedDefs, 'local');
         let workflow = await modifyWorkflow(this.runtime, existingWorkflow, modificationRequest, combinedDefs, runtimeContext);
-        // Same safety-net injection on modify regenerations.
+        // Safety net: same deterministic credential-block injection as
+        // generateWorkflowDraft. Modification regenerations are equally prone
+        // to dropping the credentials block.
         const injectedCreds = injectMissingCredentialBlocks(workflow, combinedDefs, runtimeContext);
         if (injectedCreds > 0) {
             logger.debug({ src: 'plugin:n8n-workflow:service:main' }, `Injected ${injectedCreds} missing credentials block(s) on modify (LLM omitted)`);

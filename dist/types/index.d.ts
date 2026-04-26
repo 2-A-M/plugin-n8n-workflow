@@ -243,6 +243,14 @@ export interface RuntimeContextSupportedCredential {
 export interface RuntimeContext {
     supportedCredentials: RuntimeContextSupportedCredential[];
     facts: string[];
+    /**
+     * Optional bias hint for keyword extraction. Lowercase provider tags the
+     * host knows it can satisfy (e.g. `["gmail", "discord"]`). When present,
+     * keyword extraction nudges the LLM toward these providers and away from
+     * generic fallbacks (e.g. emit `gmail` not `imap`, `discord` not
+     * `webhook`). Always optional — older hosts that omit it keep working.
+     */
+    preferredProviders?: string[];
 }
 export interface RuntimeContextProviderInput {
     userId: string;

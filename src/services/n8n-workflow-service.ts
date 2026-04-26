@@ -210,10 +210,20 @@ export class N8nWorkflowService extends Service {
       'Generating workflow draft from prompt'
     );
 
-    const keywords = await extractKeywords(this.runtime, prompt);
+    // Fetch host-supplied bias hints early (before keyword extraction) so the
+    // LLM is told which providers the host already knows it can satisfy.
+    // We pass empty `relevantNodes` / `relevantCredTypes` here because we do
+    // not yet have searchNodes results — `preferredProviders` is derived from
+    // the host's connector config alone (independent of node search). The
+    // full runtime context (with credentials + facts) is fetched again later
+    // once we have the filtered node list.
+    const earlyContext = await this.fetchRuntimeContext([], 'local');
+    const preferredProviders = earlyContext?.preferredProviders;
+
+    const keywords = await extractKeywords(this.runtime, prompt, preferredProviders);
     logger.debug(
       { src: 'plugin:n8n-workflow:service:main' },
-      `Extracted keywords: ${keywords.join(', ')}`
+      `Extracted keywords: ${keywords.join(', ')}${preferredProviders?.length ? ` (with bias: ${preferredProviders.join(', ')})` : ''}`
     );
 
     let relevantNodes = searchNodes(keywords, 15);

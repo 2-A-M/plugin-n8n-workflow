@@ -22,6 +22,15 @@ export declare class N8nWorkflowService extends Service {
     private injectCatalogClarifications;
     private getClient;
     private getConfig;
+    /**
+     * Query the optional `n8n_runtime_context_provider` service for runtime
+     * facts to inject into the workflow-generation prompt. The host (e.g. Milady)
+     * uses this to surface real Discord guild/channel IDs, the user's Gmail
+     * email, and which credential types it can resolve. Returns `undefined`
+     * when no provider is registered or the call throws — generation proceeds
+     * with the baseline prompt.
+     */
+    private fetchRuntimeContext;
     generateWorkflowDraft(prompt: string): Promise<N8nWorkflow>;
     modifyWorkflowDraft(existingWorkflow: N8nWorkflow, modificationRequest: string): Promise<N8nWorkflow>;
     deployWorkflow(workflow: N8nWorkflow, userId: string): Promise<WorkflowCreationResult>;

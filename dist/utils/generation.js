@@ -4,11 +4,25 @@ import { WORKFLOW_MATCHING_SYSTEM_PROMPT } from '../prompts/workflowMatching';
 import { keywordExtractionSchema, workflowMatchingSchema, draftIntentSchema, feasibilitySchema, } from '../schemas/index';
 import { getNodeDefinition, simplifyNodeForLLM } from './catalog';
 import { hasOutputSchema, getAvailableResources, getAvailableOperations, loadOutputSchema, formatSchemaForPrompt, } from './outputSchema';
-export async function extractKeywords(runtime, userPrompt) {
+/**
+ * Build an optional bias directive that nudges keyword extraction toward
+ * providers the host has already declared it can satisfy. The directive is
+ * appended to KEYWORD_EXTRACTION_SYSTEM_PROMPT only when a non-empty
+ * `preferredProviders` list is supplied — keeps existing baseline behavior
+ * for non-host installs.
+ */
+function buildPreferredProvidersDirective(preferredProviders) {
+    if (!preferredProviders || preferredProviders.length === 0) {
+        return '';
+    }
+    const list = preferredProviders.map((p) => p.toLowerCase()).join(', ');
+    return `\n\nHost-supported providers: ${list}. When the user names a generic concept that maps to one of these (e.g. "my email" with gmail in the list, "my chat" with discord in the list), emit the specific provider keyword (gmail, discord) — NOT a generic fallback (imap, webhook, email). Prefer these provider names over alternative integrations.`;
+}
+export async function extractKeywords(runtime, userPrompt, preferredProviders) {
     let result;
     try {
         result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
-            prompt: `${KEYWORD_EXTRACTION_SYSTEM_PROMPT}\n\nUser request: ${userPrompt}`,
+            prompt: `${KEYWORD_EXTRACTION_SYSTEM_PROMPT}${buildPreferredProvidersDirective(preferredProviders)}\n\nUser request: ${userPrompt}`,
             schema: keywordExtractionSchema,
         }));
     }
@@ -167,9 +181,10 @@ function buildOutputSchemaContext(nodes) {
 }
 /**
  * Render the optional host-supplied runtime context as two prompt sections:
- * `## Available Credentials` and `## Runtime Facts`. Returns the empty string
- * when no provider was registered — preserving baseline behavior for non-host
- * installs.
+ * `## Available Credentials` (which credential types the host can resolve) and
+ * `## Runtime Facts` (real values like Discord guild/channel IDs, the user's
+ * email). Returns the empty string when the host did not register a provider
+ * — preserving exact baseline behavior for non-host installs.
  */
 function buildRuntimeContextSections(ctx) {
     if (!ctx) {
