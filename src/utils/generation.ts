@@ -39,14 +39,30 @@ import {
 } from './outputSchema';
 import type { UnknownParamDetection } from './workflow';
 
+/**
+ * Build an optional bias directive that nudges keyword extraction toward
+ * providers the host has already declared it can satisfy. The directive is
+ * appended to KEYWORD_EXTRACTION_SYSTEM_PROMPT only when a non-empty
+ * `preferredProviders` list is supplied — keeps existing baseline behavior
+ * for non-host installs.
+ */
+function buildPreferredProvidersDirective(preferredProviders?: string[]): string {
+  if (!preferredProviders || preferredProviders.length === 0) {
+    return '';
+  }
+  const list = preferredProviders.map((p) => p.toLowerCase()).join(', ');
+  return `\n\nHost-supported providers: ${list}. When the user names a generic concept that maps to one of these (e.g. "my email" with gmail in the list, "my chat" with discord in the list), emit the specific provider keyword (gmail, discord) — NOT a generic fallback (imap, webhook, email). Prefer these provider names over alternative integrations.`;
+}
+
 export async function extractKeywords(
   runtime: IAgentRuntime,
-  userPrompt: string
+  userPrompt: string,
+  preferredProviders?: string[]
 ): Promise<string[]> {
   let result: KeywordExtractionResult;
   try {
     result = (await runtime.useModel(ModelType.OBJECT_SMALL, {
-      prompt: `${KEYWORD_EXTRACTION_SYSTEM_PROMPT}\n\nUser request: ${userPrompt}`,
+      prompt: `${KEYWORD_EXTRACTION_SYSTEM_PROMPT}${buildPreferredProvidersDirective(preferredProviders)}\n\nUser request: ${userPrompt}`,
       schema: keywordExtractionSchema,
     })) as KeywordExtractionResult;
   } catch (error) {
