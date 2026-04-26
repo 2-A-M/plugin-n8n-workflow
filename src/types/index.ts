@@ -291,8 +291,17 @@ export interface RuntimeContextSupportedCredential {
  * The plugin works without a provider — both sections are simply omitted.
  */
 export interface RuntimeContext {
-  supportedCredentials: RuntimeContextSupportedCredential[];
-  facts: string[];
+  /**
+   * Optional. When omitted (or empty), the generation prompt simply
+   * skips the "## Available Credentials" section. Implementers can
+   * return only what they have without fabricating empty arrays.
+   */
+  supportedCredentials?: RuntimeContextSupportedCredential[];
+  /**
+   * Optional. When omitted (or empty), the generation prompt simply
+   * skips the "## Runtime Facts" section.
+   */
+  facts?: string[];
 }
 
 export interface RuntimeContextProviderInput {

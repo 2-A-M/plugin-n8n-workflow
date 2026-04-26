@@ -303,7 +303,7 @@ The host provides real values for the user's connectors in the optional \`## Run
 - \`"<your-email-here>"\`, \`"<channel-name>"\`, or any \`<…>\`-bracketed pseudo-value for a fact the runtime has provided
 - \`"PLACEHOLDER"\`, \`"REPLACE_ME"\`, \`"FILL_ME_IN"\`, or similar literal placeholder strings
 
-When the runtime gives you a Discord guild's id, write the numeric id. When it gives you a channel id, write the numeric id (n8n's Discord node expects numeric channel IDs — \`"#general"\` is NOT a valid \`channelId\`). When it gives you the user's Gmail email, write the email.
+When the runtime gives you a Discord guild id or channel id, write it verbatim as a JSON string of digits — e.g. \`"123456789012345678"\` — NOT as an unquoted number. Discord snowflake ids exceed JavaScript's safe-integer range (~17–20 digits), and n8n's Discord node expects them as JSON strings. \`"#general"\` is NOT a valid \`channelId\`. When the runtime gives you the user's Gmail email, write the email.
 
 If a fact is genuinely missing AND the runtime did not provide it, add a question to \`_meta.requiresClarification\` rather than emitting a placeholder.
 
