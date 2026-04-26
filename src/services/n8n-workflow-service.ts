@@ -220,7 +220,7 @@ export class N8nWorkflowService extends Service {
     // the host's connector config alone (independent of node search). The
     // full runtime context (with credentials + facts) is fetched again later
     // once we have the filtered node list.
-    const earlyContext = await this.fetchRuntimeContext([], 'local');
+    const earlyContext = await this.fetchRuntimeContext([], opts?.userId ?? 'local');
     const preferredProviders = earlyContext?.preferredProviders;
 
     const keywords = await extractKeywords(this.runtime, prompt, preferredProviders);
