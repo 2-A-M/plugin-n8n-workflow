@@ -58,5 +58,11 @@ export class N8nCredentialStore extends Service {
             .where(eq(credentialMappings.userId, userId));
         return rows;
     }
+    async delete(userId, credType) {
+        const db = this.getDb();
+        await db
+            .delete(credentialMappings)
+            .where(and(eq(credentialMappings.userId, userId), eq(credentialMappings.credType, credType)));
+    }
 }
 //# sourceMappingURL=n8n-credential-store.js.map

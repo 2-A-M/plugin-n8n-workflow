@@ -273,6 +273,7 @@ export interface N8nCredentialStoreApi {
     get(userId: string, credType: string): Promise<string | null>;
     set(userId: string, credType: string, n8nCredId: string): Promise<void>;
     listByUser(userId: string): Promise<CredentialMapping[]>;
+    delete(userId: string, credType: string): Promise<void>;
 }
 export interface CredentialResolutionResult {
     workflow: N8nWorkflow;

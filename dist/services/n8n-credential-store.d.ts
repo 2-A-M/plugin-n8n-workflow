@@ -16,5 +16,6 @@ export declare class N8nCredentialStore extends Service implements N8nCredential
     get(userId: string, credType: string): Promise<string | null>;
     set(userId: string, credType: string, n8nCredId: string): Promise<void>;
     listByUser(userId: string): Promise<CredentialMapping[]>;
+    delete(userId: string, credType: string): Promise<void>;
 }
 //# sourceMappingURL=n8n-credential-store.d.ts.map
