@@ -336,6 +336,12 @@ export interface N8nCredentialStoreApi {
   get(userId: string, credType: string): Promise<string | null>;
   set(userId: string, credType: string, n8nCredId: string): Promise<void>;
   listByUser(userId: string): Promise<CredentialMapping[]>;
+  /**
+   * Forget the cached n8n credential id for (userId, credType). The next
+   * resolution falls back to credProvider so a disconnect-then-prompt flow
+   * surfaces `needs_auth` instead of reusing stale credentials.
+   */
+  delete(userId: string, credType: string): Promise<void>;
 }
 
 // Credential resolution types
