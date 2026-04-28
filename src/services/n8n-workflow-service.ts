@@ -23,6 +23,10 @@ import {
   ensureExpressionPrefix,
 } from '../utils/workflow';
 import { resolveCredentials } from '../utils/credentialResolver';
+import {
+  CATALOG_CLARIFICATION_SUFFIX,
+  isCatalogClarification,
+} from '../utils/clarification';
 import type {
   N8nWorkflow,
   N8nWorkflowResponse,
@@ -134,10 +138,11 @@ export class N8nWorkflowService extends Service {
     }
 
     // Strip previous catalog-derived clarifications to avoid stale duplicates
-    // across regeneration cycles (generate → modify → modify).
-    const CATALOG_SUFFIX = '— please provide this value or clarify your requirements';
+    // across regeneration cycles (generate → modify → modify). Mixed-shape
+    // arrays (legacy strings + structured ClarificationRequest) are both
+    // supported via isCatalogClarification.
     const nonCatalog = (workflow._meta.requiresClarification || []).filter(
-      (c) => !c.endsWith(CATALOG_SUFFIX)
+      (c) => !isCatalogClarification(c)
     );
 
     if (catalogWarnings.length > 0) {
@@ -145,7 +150,9 @@ export class N8nWorkflowService extends Service {
         { src: 'plugin:n8n-workflow:service:main' },
         `Catalog validation: ${catalogWarnings.join(', ')}`
       );
-      const clarifications = catalogWarnings.map((w) => `${w} ${CATALOG_SUFFIX}`);
+      const clarifications = catalogWarnings.map(
+        (w) => `${w} ${CATALOG_CLARIFICATION_SUFFIX}`
+      );
       workflow._meta.requiresClarification = [...nonCatalog, ...clarifications];
     } else {
       workflow._meta.requiresClarification = nonCatalog.length > 0 ? nonCatalog : undefined;
