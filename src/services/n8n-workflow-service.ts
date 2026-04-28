@@ -29,11 +29,15 @@ import type {
   N8nExecution,
   WorkflowCreationResult,
   N8nCredentialStoreApi,
+  NodeDefinition,
+  RuntimeContext,
 } from '../types/index';
 import {
   N8N_CREDENTIAL_STORE_TYPE,
   N8N_CREDENTIAL_PROVIDER_TYPE,
+  N8N_RUNTIME_CONTEXT_PROVIDER_TYPE,
   isCredentialProvider,
+  isRuntimeContextProvider,
   UnsupportedIntegrationError,
 } from '../types/index';
 
@@ -161,6 +165,44 @@ export class N8nWorkflowService extends Service {
     return this.serviceConfig;
   }
 
+  /**
+   * Query the optional `n8n_runtime_context_provider` service for runtime
+   * facts to inject into the workflow-generation prompt. The host (e.g. Milady)
+   * uses this to surface real Discord guild/channel IDs, the user's Gmail
+   * email, and which credential types it can resolve. Returns `undefined`
+   * when no provider is registered or the call throws — generation proceeds
+   * with the baseline prompt.
+   */
+  private async fetchRuntimeContext(
+    nodeDefs: NodeDefinition[],
+    userId: string
+  ): Promise<RuntimeContext | undefined> {
+    const raw = this.runtime.getService(N8N_RUNTIME_CONTEXT_PROVIDER_TYPE);
+    const provider = isRuntimeContextProvider(raw) ? raw : null;
+    if (!provider) {
+      return undefined;
+    }
+    const relevantCredTypes = [
+      ...new Set(nodeDefs.flatMap((n) => (n.credentials ?? []).map((c) => c.name))),
+    ];
+    try {
+      return await provider.getRuntimeContext({
+        userId,
+        relevantNodes: nodeDefs,
+        relevantCredTypes,
+      });
+    } catch (err) {
+      logger.warn(
+        {
+          src: 'plugin:n8n-workflow:service:main',
+          err: err instanceof Error ? err.message : String(err),
+        },
+        'RuntimeContextProvider threw — generating without runtime facts'
+      );
+      return undefined;
+    }
+  }
+
   async generateWorkflowDraft(prompt: string): Promise<N8nWorkflow> {
     logger.info(
       { src: 'plugin:n8n-workflow:service:main' },
@@ -235,11 +277,10 @@ export class N8nWorkflowService extends Service {
     }
     // ── End integration check ──
 
-    let workflow = await generateWorkflow(
-      this.runtime,
-      prompt,
-      relevantNodes.map((r) => r.node)
-    );
+    const finalNodeDefs = relevantNodes.map((r) => r.node);
+    const runtimeContext = await this.fetchRuntimeContext(finalNodeDefs, 'local');
+
+    let workflow = await generateWorkflow(this.runtime, prompt, finalNodeDefs, runtimeContext);
     logger.debug(
       { src: 'plugin:n8n-workflow:service:main' },
       `Generated workflow with ${workflow.nodes?.length || 0} nodes`
@@ -332,11 +373,14 @@ export class N8nWorkflowService extends Service {
       `Modify context: ${existingDefs.length} existing + ${newDefs.length} searched → ${combinedDefs.length} unique node defs`
     );
 
+    const runtimeContext = await this.fetchRuntimeContext(combinedDefs, 'local');
+
     let workflow = await modifyWorkflow(
       this.runtime,
       existingWorkflow,
       modificationRequest,
-      combinedDefs
+      combinedDefs,
+      runtimeContext
     );
 
     normalizeTriggerSimpleParam(workflow);
