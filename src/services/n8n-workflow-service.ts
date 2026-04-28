@@ -31,6 +31,7 @@ import type {
   N8nCredentialStoreApi,
   NodeDefinition,
   RuntimeContext,
+  TriggerContext,
 } from '../types/index';
 import {
   N8N_CREDENTIAL_STORE_TYPE,
@@ -175,7 +176,8 @@ export class N8nWorkflowService extends Service {
    */
   private async fetchRuntimeContext(
     nodeDefs: NodeDefinition[],
-    userId: string
+    userId: string,
+    triggerContext?: TriggerContext
   ): Promise<RuntimeContext | undefined> {
     const raw = this.runtime.getService(N8N_RUNTIME_CONTEXT_PROVIDER_TYPE);
     const provider = isRuntimeContextProvider(raw) ? raw : null;
@@ -190,6 +192,7 @@ export class N8nWorkflowService extends Service {
         userId,
         relevantNodes: nodeDefs,
         relevantCredTypes,
+        ...(triggerContext ? { triggerContext } : {}),
       });
     } catch (err) {
       logger.warn(
@@ -205,7 +208,7 @@ export class N8nWorkflowService extends Service {
 
   async generateWorkflowDraft(
     prompt: string,
-    opts?: { userId?: string }
+    opts?: { userId?: string; triggerContext?: TriggerContext }
   ): Promise<N8nWorkflow> {
     logger.info(
       { src: 'plugin:n8n-workflow:service:main' },
@@ -281,7 +284,11 @@ export class N8nWorkflowService extends Service {
     // ── End integration check ──
 
     const finalNodeDefs = relevantNodes.map((r) => r.node);
-    const runtimeContext = await this.fetchRuntimeContext(finalNodeDefs, opts?.userId ?? 'local');
+    const runtimeContext = await this.fetchRuntimeContext(
+      finalNodeDefs,
+      opts?.userId ?? 'local',
+      opts?.triggerContext
+    );
 
     let workflow = await generateWorkflow(this.runtime, prompt, finalNodeDefs, runtimeContext);
     logger.debug(
@@ -347,7 +354,7 @@ export class N8nWorkflowService extends Service {
   async modifyWorkflowDraft(
     existingWorkflow: N8nWorkflow,
     modificationRequest: string,
-    opts?: { userId?: string }
+    opts?: { userId?: string; triggerContext?: TriggerContext }
   ): Promise<N8nWorkflow> {
     logger.info(
       { src: 'plugin:n8n-workflow:service:main' },
@@ -377,7 +384,11 @@ export class N8nWorkflowService extends Service {
       `Modify context: ${existingDefs.length} existing + ${newDefs.length} searched → ${combinedDefs.length} unique node defs`
     );
 
-    const runtimeContext = await this.fetchRuntimeContext(combinedDefs, opts?.userId ?? 'local');
+    const runtimeContext = await this.fetchRuntimeContext(
+      combinedDefs,
+      opts?.userId ?? 'local',
+      opts?.triggerContext
+    );
 
     let workflow = await modifyWorkflow(
       this.runtime,

@@ -304,10 +304,37 @@ export interface RuntimeContext {
   facts?: string[];
 }
 
+/**
+ * Originating-conversation routing context. Hosts pass this when the workflow
+ * is being generated from inside a platform conversation (e.g. a Discord DM),
+ * so the LLM can target "this channel" / "back to me" without the user having
+ * to name an ID. The host typically derives it from the inbound message's
+ * `MessageMetadata` and surfaces it as a fact line ("This workflow was
+ * prompted from Discord channel #foo (id 123) in Bar (id 456)…").
+ *
+ * All fields are optional. Hosts only fill the platform block that matches
+ * the trigger source. `resolvedNames` lets the host pass human names for the
+ * channel / server (when available) so the prompt can reference them in
+ * natural language.
+ */
+export interface TriggerContext {
+  /** Source platform — `"discord" | "telegram" | "slack" | "gmail" | …` */
+  source?: string;
+  discord?: { channelId?: string; guildId?: string; threadId?: string };
+  telegram?: { chatId?: string | number; threadId?: string | number };
+  slack?: { channelId?: string; teamId?: string };
+  resolvedNames?: { channel?: string; server?: string };
+}
+
 export interface RuntimeContextProviderInput {
   userId: string;
   relevantNodes: NodeDefinition[];
   relevantCredTypes: string[];
+  /**
+   * Optional originating-conversation context. Forward-compatible: hosts that
+   * don't know about it simply omit the field.
+   */
+  triggerContext?: TriggerContext;
 }
 
 export interface RuntimeContextProvider {
