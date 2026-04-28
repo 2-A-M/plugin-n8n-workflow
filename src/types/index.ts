@@ -286,8 +286,13 @@ export interface N8nCredentialStoreApi {
    * Forget the cached n8n credential id for (userId, credType). The next
    * resolution falls back to credProvider so a disconnect-then-prompt flow
    * surfaces `needs_auth` instead of reusing stale credentials.
+   *
+   * Optional: external/custom credential-store implementations that pre-date
+   * this method continue to satisfy the interface; hosts that need to cascade
+   * a disconnect must check for the method (`store.delete?.(userId, credType)`)
+   * before calling.
    */
-  delete(userId: string, credType: string): Promise<void>;
+  delete?(userId: string, credType: string): Promise<void>;
 }
 
 // Credential resolution types
