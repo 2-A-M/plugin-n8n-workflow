@@ -205,7 +205,7 @@ export class N8nWorkflowService extends Service {
 
   async generateWorkflowDraft(
     prompt: string,
-    userId: string = 'local'
+    opts?: { userId?: string }
   ): Promise<N8nWorkflow> {
     logger.info(
       { src: 'plugin:n8n-workflow:service:main' },
@@ -281,7 +281,7 @@ export class N8nWorkflowService extends Service {
     // ── End integration check ──
 
     const finalNodeDefs = relevantNodes.map((r) => r.node);
-    const runtimeContext = await this.fetchRuntimeContext(finalNodeDefs, userId);
+    const runtimeContext = await this.fetchRuntimeContext(finalNodeDefs, opts?.userId ?? 'local');
 
     let workflow = await generateWorkflow(this.runtime, prompt, finalNodeDefs, runtimeContext);
     logger.debug(
@@ -347,7 +347,7 @@ export class N8nWorkflowService extends Service {
   async modifyWorkflowDraft(
     existingWorkflow: N8nWorkflow,
     modificationRequest: string,
-    userId: string = 'local'
+    opts?: { userId?: string }
   ): Promise<N8nWorkflow> {
     logger.info(
       { src: 'plugin:n8n-workflow:service:main' },
@@ -377,7 +377,7 @@ export class N8nWorkflowService extends Service {
       `Modify context: ${existingDefs.length} existing + ${newDefs.length} searched → ${combinedDefs.length} unique node defs`
     );
 
-    const runtimeContext = await this.fetchRuntimeContext(combinedDefs, userId);
+    const runtimeContext = await this.fetchRuntimeContext(combinedDefs, opts?.userId ?? 'local');
 
     let workflow = await modifyWorkflow(
       this.runtime,

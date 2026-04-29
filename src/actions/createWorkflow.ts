@@ -395,7 +395,7 @@ export const createWorkflowAction: Action & {
             const modifiedWorkflow = await service.modifyWorkflowDraft(
               existingDraft.workflow,
               modification,
-              userId
+              { userId }
             );
 
             const modifiedDraft: WorkflowDraft = {
@@ -546,7 +546,7 @@ async function generateAndPreview(
     `Generating workflow from prompt: ${prompt.slice(0, 100)}...`
   );
 
-  const workflow = await service.generateWorkflowDraft(prompt, userId);
+  const workflow = await service.generateWorkflowDraft(prompt, { userId });
 
   const draft: WorkflowDraft = {
     workflow,
