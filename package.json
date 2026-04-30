@@ -1,6 +1,6 @@
 {
   "name": "@elizaos/plugin-n8n-workflow",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "description": "ElizaOS plugin for generating and managing n8n workflows from natural language",
   "type": "module",
   "main": "dist/index.js",
